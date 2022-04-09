@@ -23,7 +23,7 @@ en_weights <- read.csv(file = "./results/ElasticNet_stress.d.csv")$Weights
 rf_weights <- read.csv(file = "./results/RandomForestRegressor_stress.d.csv")$Weights
 feature_names <- read.csv(file = "../2_FeatureCorrectionAndFilter/keep_non_survey_context_cols3.csv", header=FALSE)
 data_with_igtb <- read.csv(file = "../2_FeatureCorrectionAndFilter/results/merge_all_time_summary_not_blinded_outlier_treated_08_12_with_baseline_corrected_non_survey_context_feats_w_igtb.csv");
-feature_names <- feature_names$V1[5:nrow(feature_names)]
+feature_names <- feature_names$V1[6:nrow(feature_names)]
 ```
 
 # Normalize weights, sort and gather top features
