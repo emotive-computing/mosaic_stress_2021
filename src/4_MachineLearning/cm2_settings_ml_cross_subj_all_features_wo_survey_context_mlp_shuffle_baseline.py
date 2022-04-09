@@ -27,8 +27,7 @@ def RunML():
     ptm.set_model_create_func(my_mlp_model_func)
     ptm.set_fit_params({'lr': 1e-1, 'batch_size':32, 'train_split': None, 'max_epochs': 500})
     ptm.set_criterion_params({'criterion': 'smooth_l1_loss'})
-    ptm.set_model_params({'num_layers': 3, 'layer_width': 30, 'activation_func': nn.ReLU})
-    # BB note - I was at layer_width=10
+    ptm.set_model_params({'num_layers': 3, 'layer_width': 10, 'activation_func': nn.ReLU})
     ptm.set_optimizer_params({'optimizer': 'sgd'})
 
     p = Pipeline()
@@ -38,11 +37,11 @@ def RunML():
     dir_path = os.path.dirname(os.path.realpath(__file__))
     s0.setFilePath(os.path.join(dir_path, os.pardir, '2_FeatureCorrectionAndFilter', 'results', 'merge_all_time_summary_not_blinded_outlier_treated_08_12_with_baseline_corrected_non_survey_context_feats.csv'))
     feat_cols = pd.read_csv(os.path.join(dir_path, 'all_feats_wo_context.txt'), header=None).values.flatten()
-    label_cols = ['stress.d']
+    label_cols = ['stress.d_shuffled']
     p.addStage(s0)
 
     # Stage 1: Generate cross-validation folds
-    s1 = GenerateCVFoldsStage(strategy='load_premade', strategy_args={'file_path': os.path.join(dir_path, os.pardir, '3_PrecomputedFolds', 'results', 'stratifiedOn-stress.d_percentileBins-10_shuffle-True_seed-3748_folds.csv')})
+    s1 = GenerateCVFoldsStage(strategy='load_premade', strategy_args={'file_path': os.path.join(dir_path, os.pardir, '3_PrecomputedFolds', 'results', 'stratifiedOn-stress.d_shuffled_percentileBins-10_shuffle-True_seed-3748_folds.csv')})
     p.addStage(s1)
 
     # Stage 2: Nested cross-validation
@@ -79,7 +78,7 @@ def RunML():
 
     p.run()
 
-    p.getDC().save('cm2_results_ncx_feats_cross_subj_mlp')
+    p.getDC().save('cm2_results_ncx_feats_cross_subj_mlp_shuffle_baseline')
 
 
 if __name__ == '__main__':

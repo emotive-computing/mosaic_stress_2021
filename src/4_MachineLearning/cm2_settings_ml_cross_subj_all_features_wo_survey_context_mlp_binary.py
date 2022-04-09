@@ -18,18 +18,27 @@ def my_mlp_model_func(params):
         model.add_module('relu'+str(layer_idx), params['activation_func']())
 
     model.add_module('linear'+str(params['num_layers']), nn.LazyLinear(1))
-    #model.add_module('softmax', nn.Softmax())
     return model
+
+def my_fit_transformer(X, y):
+    if y is not None:
+        return X.to_numpy(dtype=np.float32), np.array(y).reshape(-1,1).astype(np.float32)
+    else:
+        return X.to_numpy(dtype=np.float32), None
+
+def my_pred_transformer(y):
+    return np.array(y[:,1] > y[:,0]).astype(int).flatten()
 
 def RunML():
     # Create a PyTorch model using the custom model create function above
     ptm = PyTorchModel()
     ptm.set_model_create_func(my_mlp_model_func)
-    ptm.set_fit_params({'lr': 1e-1, 'batch_size':32, 'train_split': None, 'max_epochs': 500})
-    ptm.set_criterion_params({'criterion': 'smooth_l1_loss'})
+    ptm.set_fit_params({'lr': 1e-2, 'batch_size':32, 'train_split': None, 'max_epochs': 1000})
+    ptm.set_criterion_params({'criterion': 'binary_crossentropy_with_logits'})
     ptm.set_model_params({'num_layers': 3, 'layer_width': 30, 'activation_func': nn.ReLU})
-    # BB note - I was at layer_width=10
     ptm.set_optimizer_params({'optimizer': 'sgd'})
+    ptm.set_fit_transformer(my_fit_transformer)
+    ptm.set_prediction_transformer(my_pred_transformer)
 
     p = Pipeline()
 
@@ -41,13 +50,23 @@ def RunML():
     label_cols = ['stress.d']
     p.addStage(s0)
 
-    # Stage 1: Generate cross-validation folds
-    s1 = GenerateCVFoldsStage(strategy='load_premade', strategy_args={'file_path': os.path.join(dir_path, os.pardir, '3_PrecomputedFolds', 'results', 'stratifiedOn-stress.d_percentileBins-10_shuffle-True_seed-3748_folds.csv')})
+    # Stage 1: Binarize the stress labels per participant
+    s1 = EncoderPreprocessingStage(['snapshot_id']+label_cols, 'binarize_median', {'group_by': 'snapshot_id'})
     p.addStage(s1)
 
-    # Stage 2: Nested cross-validation
-    #s2 = NestedCrossValidationStage()
-    s2 = CrossValidationStage()
+    # Stage 2: Generate cross-validation folds
+    s2 = GenerateCVFoldsStage(strategy='load_premade', strategy_args={'file_path': os.path.join(dir_path, os.pardir, '3_PrecomputedFolds', 'results', 'stratifiedOn-stress.d_percentileBins-10_shuffle-True_seed-3748_folds.csv')})
+    #train_test_df = pd.read_csv(os.path.join(dir_path, os.pardir, '3_PrecomputedFolds', 'results', 'stratifiedOn-stress.d_percentileBins-10_shuffle-True_seed-3748_folds.csv'))
+    #train_idx = train_test_df['Fold1_train']
+    #train_idx = train_idx[~np.isnan(train_idx)].astype(int)
+    #test_idx = train_test_df['Fold1_test']
+    #test_idx = test_idx[~np.isnan(test_idx)].astype(int)
+    #s2 = GenerateCVFoldsStage(strategy='manual_train_test', strategy_args={'train_idx': train_idx, 'test_idx': train_idx})
+    p.addStage(s2)
+
+    # Stage 3: Nested cross-validation
+    #s3 = NestedCrossValidationStage()
+    s3 = CrossValidationStage()
 
     #cv_context_ptm = NestedSupervisedCVContext()
     cv_context_ptm = SupervisedCVContext()
@@ -69,17 +88,19 @@ def RunML():
 
     eval_context = SupervisedEvaluationContext()
     eval_context.label_cols = label_cols
-    eval_context.eval_funcs = [pearsonr, spearmanr, 'smape']
+    eval_context.eval_funcs = ['f1', 'accuracy', 'precision', 'recall']
     cv_context_ptm.eval_context = eval_context
 
     #cv_context_ptm.cv_folds_stage = GenerateCVFoldsStage(strategy='stratified_grouped', strategy_args={'num_folds': 3, 'stratify_on': 'stress.d', 'percentile_bins': 10, 'seed': 3748, 'group_by': 'snapshot_id'})
     #s2.set_nested_cv_context(cv_context_ptm)
-    s2.setCVContext(cv_context_ptm)
-    p.addStage(s2)
+    s3.setCVContext(cv_context_ptm)
+    p.addStage(s3)
 
     p.run()
 
-    p.getDC().save('cm2_results_ncx_feats_cross_subj_mlp')
+    p.getDC().save('cm2_results_ncx_feats_cross_subj_mlp_binary')
+
+    cv_results = p.getDC().get_item('cv_results')
 
 
 if __name__ == '__main__':
