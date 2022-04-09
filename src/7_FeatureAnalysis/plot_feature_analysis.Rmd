@@ -1,0 +1,113 @@
+---
+title: "PlotFeatureAnalysis"
+author: "Brandon"
+date: "December 12, 2020"
+output: html_document
+---
+
+```{r}
+library(sjPlot)
+library(lme4)
+library(ggplot2)
+library(plyr)
+library(reshape2)
+library(scales)
+library(car)
+library(ggpubr)
+```
+
+#Load data
+```{r, cache = T}
+en_weights <- read.csv(file = "./results/ElasticNet_stress.d.csv")$Weights
+rf_weights <- read.csv(file = "./results/RandomForestRegressor_stress.d.csv")$Weights
+feature_names <- read.csv(file = "../2_FeatureCorrectionAndFilter/keep_non_survey_context_cols2.csv", header=FALSE)
+feature_names <- feature_names$V1[5:nrow(feature_names)]
+```
+
+# Normalize weights, sort and gather top features
+```{r}
+en_weights <- -abs(en_weights)/sum(abs(en_weights))
+rf_weights <- rf_weights/sum(abs(rf_weights))
+en_order <- order(abs(en_weights), decreasing=TRUE)
+rf_order <- order(abs(rf_weights), decreasing=TRUE)
+en_df <- do.call(rbind, Map(data.frame, features=feature_names[en_order], weights=en_weights[en_order]))
+rf_df <- do.call(rbind, Map(data.frame, features=feature_names[rf_order], weights=rf_weights[rf_order]))
+en_df$features <- factor(en_df$features, levels = rev(en_df$features))
+rf_df$features <- factor(rf_df$features, levels = rev(rf_df$features))
+```
+
+# Make the top features human readable
+```{r}
+num_top_feats <- 15
+en_df_feats <- as.character(en_df$features)
+rf_df_feats <- as.character(rf_df$features)
+
+en_df_feats[1:num_top_feats]
+
+
+en_df_feats <- gsub("^misc_work_day$", "At Work Today", en_df_feats)
+en_df_feats <- gsub("^rolling_ideal_midsleep_restricted_adjusted$", "Midpoint of Main Sleep", en_df_feats)
+en_df_feats <- gsub("^weekend_bedtime_difference_restricted_mean_imputation$", "Weekend/Weekday Bedtime Difference", en_df_feats)
+en_df_feats <- gsub("^weekend_duration_difference$", "Weekend/Weekday Sleep Duration Difference", en_df_feats)
+en_df_feats <- gsub("^diff_sdann_8_to_6_to_not_sdnn$", "Work/Non-work-hours SDANN HRV Difference", en_df_feats)
+en_df_feats <- gsub("^step_count$", "Step Count", en_df_feats)
+en_df_feats <- gsub("^unlock_duration_ep_3$", "Phone Unlock Duration, 6pm-12am", en_df_feats)
+en_df_feats <- gsub("^office_at_home$", "Has Home Office", en_df_feats)
+en_df_feats <- gsub("^last_work_beacon_90$", "Time of Last Work Beacon", en_df_feats)
+en_df_feats <- gsub("^pa_wakeup_time$", "Wakeup Time via Phone Agent", en_df_feats)
+en_df_feats <- gsub("^ratio_sdann_8_to_6_to_not_sdnn$", "Work/Nonwork-hours SDANN HRV Ratio", en_df_feats)
+en_df_feats <- gsub("^percent_one_0_outliers_treated$", "Duration Near 1+ Participants, 12am-9am", en_df_feats)
+en_df_feats <- gsub("^tp_humidity$", "Humidity", en_df_feats)
+en_df_feats <- gsub("^episodic_relative_to_week$", "HR Percentile Relative to Previous Week", en_df_feats)
+en_df_feats <- gsub("^weekend_duration_difference_adjusted$", "Weekend/Weekday Adjusted Sleep Duration Difference", en_df_feats)
+en_df$features <- as.factor(en_df_feats)
+
+
+rf_df_feats <- gsub("^misc_work_day$", "At Work Today", rf_df_feats)
+rf_df_feats <- gsub("^location_id$", "Location via Beacon Proximity", rf_df_feats)
+rf_df_feats <- gsub("^lifetime_avg_rmssd$", "Running Average RMSSD HRV", rf_df_feats)
+rf_df_feats <- gsub("^day_sunrise_seconds_since_midnight$", "Sunrise Time", rf_df_feats)
+rf_df_feats <- gsub("^day_sunset_seconds_since_midnight$", "Sunset Time", rf_df_feats)
+rf_df_feats <- gsub("^resilience_lifetime_avg_hrv$", "Running Average SDNN HRV", rf_df_feats)
+rf_df_feats <- gsub("^controlling_lifetime_avg_hr$", "Running Average HR", rf_df_feats)
+rf_df_feats <- gsub("^controlling_lifetime_avg_hr_healthapi$", "Running Average HR With Garmin Filtering", rf_df_feats)
+rf_df_feats <- gsub("^tp_humidity$", "Humidity", rf_df_feats)
+rf_df_feats <- gsub("^time_spent_last_24hs$", "Screen Time over Last 24 Hours", rf_df_feats)
+rf_df_feats <- gsub("^weekend_duration_difference_restricted_adjusted$", "Weekend/Weekday Adjusted Sleep Duration Difference", rf_df_feats)
+rf_df_feats <- gsub("^avg_stress$", "Average Garmin Stress", rf_df_feats)
+rf_df_feats <- gsub("^weekend_duration_difference_adjusted_imputed_with_pa$", "Weekend/Weekday PA-Adjusted Sleep Duration Difference", rf_df_feats)
+rf_df_feats <- gsub("^first_home_beacon_pm_90$", "Time of Arrival At Home After 12pm", rf_df_feats)
+rf_df_feats <- gsub("^act_in_vehicle_ep_2$", "In Vehicle Between 9am-6pm ", rf_df_feats)
+rf_df$features <- as.factor(rf_df_feats)
+
+en_df$features <- factor(en_df$features, levels = rev(en_df$features))
+rf_df$features <- factor(rf_df$features, levels = rev(rf_df$features))
+```
+
+
+#Plot distributions
+```{r}
+neutral_color = "#C4C4C4"
+red_color = "#F8766D"
+green_color = "#00BA38"
+blue_color = "#619CFF"
+p = ggplot(en_df[1:num_top_feats,], aes(x=features, y=weights, fill=features)) + geom_bar(stat="identity", , color="black")
+p = p + theme_light() + theme(legend.position = "none", legend.background = element_rect(fill="transparent"), panel.background = element_blank(), legend.title=element_blank(), strip.background = element_rect(fill="white"), strip.text = element_text(color="black", face="bold", size=11, hjust=0.5), axis.text.x = element_text(size=11), axis.text.y = element_text(size=11), text = element_text(size=11))
+p = p + scale_fill_manual(values=c(blue_color,neutral_color,green_color,neutral_color,neutral_color,neutral_color,neutral_color,neutral_color,neutral_color,neutral_color,neutral_color,neutral_color,neutral_color,neutral_color,"#F8766D"))
+p = p + xlab("") + ylab("Top EN Features")
+p = p + coord_flip()
+p = p + scale_y_continuous(breaks=seq(-0.15,0,by=0.05), labels=abs(seq(-0.15,0,by=0.05)), limits=c(-0.15,0))
+p
+ggsave("en_feature_importance.pdf", height=4, width=6)
+
+p = ggplot(rf_df[1:num_top_feats,], aes(x=features, y=weights, fill=features)) + geom_bar(stat="identity", , color="black")
+p = p + theme_light() + theme(legend.position = "none", legend.background = element_rect(fill="transparent"), panel.background = element_blank(), legend.title=element_blank(), strip.background = element_rect(fill="white"), strip.text = element_text(color="black", face="bold", size=11, hjust=0.5), axis.text.x = element_text(size=11), axis.text.y = element_text(size=11), text = element_text(size=11))
+p = p + scale_fill_manual(values=c(neutral_color,neutral_color,neutral_color,neutral_color,blue_color,neutral_color,green_color,neutral_color,neutral_color,neutral_color,neutral_color,neutral_color,neutral_color,neutral_color,"#F8766D"))
+p = p + xlab("") + ylab("Top RF Features")
+p = p + coord_flip()
+p = p + scale_x_discrete(position = "top")
+p = p + ylim(0,0.064)
+p
+ggsave("rf_feature_importance.pdf", height=4, width=6)
+```
+

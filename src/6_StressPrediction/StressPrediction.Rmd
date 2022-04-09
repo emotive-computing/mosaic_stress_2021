@@ -1,0 +1,286 @@
+---
+title: "StressPrediction"
+author: "Sidney DMello"
+date: "February 24, 2020"
+output: html_document
+---
+
+```{r}
+library(sjPlot)
+library(lme4)
+library(ggplot2)
+library(plyr)
+library(reshape2)
+library(scales)
+library(car)
+library(ggpubr)
+```
+
+#Load data
+```{r, cache = T}
+
+#data <- read.csv(file = "../5_PredictionPreprocessing/results/all_feats_cross_subj_regressions_LR_RF.csv");
+#data <- read.csv(file = "../5_PredictionPreprocessing/results/all_feats_within_subj_regressions_LR_RF.csv");
+data <- read.csv(file = "../5_PredictionPreprocessing/results/ncx_feats_cross_subj_regressions_LR_RF.csv");
+#data <- read.csv(file = "../5_PredictionPreprocessing/results/ncx_feats_within_subj_regressions_LR_RF.csv");
+
+#sjt.xtab(data$True_value, data$stress.d)
+
+data.hrv <- read.csv(file = "../../dataset/IARPA/hrv_hr_stress/hrv_summary-sdnn.csv", na.strings = "NULL");
+data <- merge(data, data.hrv, by = c("snapshot_id", "date"), all.x = T)
+
+# BB - Remove the RFLR models
+data <- data[!(data$Model=="RFLR"),]
+
+data.actual <- subset(data, Label == "stress.d")
+data.shuffled.cross <- subset(data, Label == "stress.d_shuffled")
+data.shuffled.within <- subset(data, Label == "stress.d_shuffledWithinSubject")
+data.actual.lr <- subset(data, Model == "ElasticNet" & Label == "stress.d")
+data.actual.rf <- subset(data, Model == "RandomForestRegressor" & Label == "stress.d")
+#data.actual.rflr <- subset(data, Model == "RFLR" & Label == "stress.d")
+```
+
+#Plot distributions
+```{r}
+data.melt <- melt(data[c("snapshot_id", "True_value", "Predicted_value", "Model", "Label")], id = c("snapshot_id", "Model", "Label"))
+#data.melt$value_prop
+
+Label.labs <- c("")
+names(Label.labs) <- c("stress.d")
+Model.labs <- c("Elastic Net","Random Forest")
+names(Model.labs) <- c("ElasticNet", "RandomForestRegressor")
+p = ggplot(subset(data.melt, Label == "stress.d"), aes(x=value))
+p = p + geom_histogram(position="identity", aes(y=stat(width*density),group=variable, colour=variable, fill=variable), alpha=0.5)
+p = p + theme_light()  + theme(legend.position = c(0.85, 0.85), legend.background = element_rect(fill="transparent"), panel.background = element_blank(), legend.title=element_blank(), strip.background = element_rect(fill="white"), strip.text = element_text(color="black", face="bold", size=13, hjust=0.5), axis.text.x = element_text(size=12), axis.text.y = element_text(size=13), text = element_text(size=13))
+p = p + scale_y_continuous(labels = percent)#ylim(0, 302.5)
+p = p + facet_wrap(Model ~ Label, labeller = labeller(Model=Model.labs, Label=Label.labs))
+p = p + xlab("Stress Value") + ylab("Normalized Count")
+p = p + scale_fill_discrete(breaks=c("True_value","Predicted_value"),labels=c("True Value","Predicted Value")) + scale_colour_discrete(breaks=c("True_value","Predicted_value"),labels=c("True Value","Predicted Value"))
+p
+ggsave("lr_rf_gt_densities.pdf", height=3, width=6)
+```
+
+```{r}
+data.melt.stress.lr <- subset(data.melt, Label == "stress.d" & Model == "ElasticNet")
+data.melt.stress.rf <- subset(data.melt, Label == "stress.d" & Model == "RandomForestRegressor")
+data.melt.shuffled.cross.lr <- subset(data.melt, Label == "stress.d_shuffled" & Model == "ElasticNet")
+data.melt.shuffled.cross.rf <- subset(data.melt, Label == "stress.d_shuffled" & Model == "RandomForestRegressor")
+data.melt.shuffled.within.lr <- subset(data.melt, Label == "stress.d_shuffledWithinSubject" & Model == "ElasticNet")
+data.melt.shuffled.within.rf <- subset(data.melt, Label == "stress.d_shuffledWithinSubject" & Model == "RandomForestRegressor")
+# LR
+print("Cross-subject LR: (smape, Spearman, shuffled cross smape, shuffled cross Spearman, shuffled within smape, shuffled within Spearman")
+Metrics::smape(subset(data.melt.stress.lr, variable == "True_value")$value, subset(data.melt.stress.lr, variable == "Predicted_value")$value)
+cor(subset(data.melt.stress.lr, variable == "True_value")$value, subset(data.melt.stress.lr, variable == "Predicted_value")$value, method="spearman")
+
+Metrics::smape(subset(data.melt.shuffled.cross.lr, variable == "True_value")$value, subset(data.melt.shuffled.cross.lr, variable == "Predicted_value")$value)
+cor(subset(data.melt.shuffled.cross.lr, variable == "True_value")$value, subset(data.melt.shuffled.cross.lr, variable == "Predicted_value")$value, method="spearman")
+
+Metrics::smape(subset(data.melt.shuffled.within.lr, variable == "True_value")$value, subset(data.melt.shuffled.within.lr, variable == "Predicted_value")$value)
+cor(subset(data.melt.shuffled.within.lr, variable == "True_value")$value, subset(data.melt.shuffled.within.lr, variable == "Predicted_value")$value, method="spearman")
+
+# RF
+print("Cross-subject RF: (smape, Spearman, shuffled cross smape, shuffled cross Spearman, shuffled within smape, shuffled within Spearman")
+Metrics::smape(subset(data.melt.stress.rf, variable == "True_value")$value, subset(data.melt.stress.rf, variable == "Predicted_value")$value)
+cor(subset(data.melt.stress.rf, variable == "True_value")$value, subset(data.melt.stress.rf, variable == "Predicted_value")$value, method="spearman")
+
+Metrics::smape(subset(data.melt.shuffled.cross.rf, variable == "True_value")$value, subset(data.melt.shuffled.cross.rf, variable == "Predicted_value")$value)
+cor(subset(data.melt.shuffled.cross.rf, variable == "True_value")$value, subset(data.melt.shuffled.cross.rf, variable == "Predicted_value")$value, method="spearman")
+
+Metrics::smape(subset(data.melt.shuffled.within.rf, variable == "True_value")$value, subset(data.melt.shuffled.within.rf, variable == "Predicted_value")$value)
+cor(subset(data.melt.shuffled.within.rf, variable == "True_value")$value, subset(data.melt.shuffled.within.rf, variable == "Predicted_value")$value, method="spearman")
+
+```
+
+#Aggregate at subject level,  models to each other, and to shuffled model
+```{r, warning = F}
+data.sub <- ddply(data, c("snapshot_id", "Model", "Label"), summarize, n = length(True_value), true.mn = mean(True_value, na.rm = T), pred.mn = mean(Predicted_value, na.rm = T), smape = Metrics::smape(True_value, Predicted_value), rho = cor(True_value, Predicted_value, method = "spearman", use = "pairwise.complete.obs"));
+
+ddply(data.sub, c("Model", "Label"), summarize, rho.mn = mean(rho, na.rm = T), rho.sd = sd(rho, na.rm = T), smape.mn = mean(smape, na.rm = T), smape.sd = sd(smape, na.rm = T))
+
+# Spearman boxplot
+# p_compare1 <- compare_means(rho~Label, data=subset(data.sub, Model="ElasticNet"), method="t.test", paired=T) %>% mutate(y.position = c(0.75, 0.6, 0.95))
+# p_compare2 <- compare_means(rho~Label, data=subset(data.sub, Model="RandomForestRegressor"), method="t.test", paired=T) %>% mutate(y.position = c(0.75, 0.6, 0.95))
+# p_compare <- rbind(p_compare1, p_compare2)
+# p_compare$p.format[p_compare$p.adj < 0.001] = "p<0.001"
+# p_compare$p.format[p_compare$p.adj >= 0.001] = paste0("p=",p_compare$p.format[p_compare$p.adj >= 0.001])
+p = ggplot(data.sub, aes(y = rho, x = Label)) + geom_boxplot(aes(fill=Label), width=0.6, outlier.shape=NA) + geom_hline(yintercept = 0, linetype="dashed")
+p = p + theme_light()  + theme(legend.position = "none", panel.background = element_blank(), strip.background = element_rect(fill="white"), strip.text = element_text(color="black", face="bold", size=13, hjust=0.5), axis.text.x = element_text(size=12), axis.text.y = element_text(size=13), text = element_text(size=13))
+Model.labs <- c("Elastic Net","Random Forest")
+names(Model.labs) <- c("ElasticNet", "RandomForestRegressor")
+p = p + facet_wrap(~Model, labeller=labeller(Model=Model.labs))
+p = p + ylim(-0.35, 1.05)
+p = p + ylab("Spearman Rho") + xlab("")
+p = p + scale_x_discrete(breaks=c("stress.d","stress.d_shuffled","stress.d_shuffledWithinSubject"),labels=c("Stress","Shuffled\nCross-subj.","Shuffled\nWithin-subj."),expand=expansion(mult = c(0.2,0.2)))
+p = p + stat_compare_means(method="t.test", label.y = c(0.75, 0.6, 0.95), comparisons = list(c("stress.d","stress.d_shuffled"),c("stress.d_shuffled","stress.d_shuffledWithinSubject"),c("stress.d","stress.d_shuffledWithinSubject")))
+#p = p + stat_pvalue_manual(data=p_compare, label="p.format", xmin="group1", xmax="group2", y.position = "y.position")
+p
+ggsave("spearman_boxplot.pdf", height=3, width=6)
+
+# SMAPE boxplot
+# p_compare <- compare_means(smape~Label, data=data.sub, method="t.test", paired=T) %>% mutate(y.position = c(0.55, 0.60, 0.65))
+# p_compare$p.format[p_compare$p.adj < 0.001] = "p<0.001"
+# p_compare$p.format[p_compare$p.adj >= 0.001] = paste0("p=",p_compare$p.format[p_compare$p.adj >= 0.001])
+p = ggplot(data.sub, aes(y = smape, x = Label)) + geom_boxplot(aes(fill=Label), width=0.6, outlier.shape=NA) + geom_hline(yintercept = 0, linetype="dashed")
+p = p + theme_light()  + theme(legend.position = "none", panel.background = element_blank(), strip.background = element_rect(fill="white"), strip.text = element_text(color="black", face="bold", size=13, hjust=0.5), axis.text.x = element_text(size=12), axis.text.y = element_text(size=13), text = element_text(size=13))
+Model.labs <- c("Elastic Net","Random Forest")
+names(Model.labs) <- c("ElasticNet", "RandomForestRegressor")
+p = p + facet_wrap(~Model, labeller=labeller(Model=Model.labs))
+p = p + ylim(0.25, 0.68)
+p = p + ylab("SMAPE") + xlab("")
+p = p + scale_x_discrete(breaks=c("stress.d","stress.d_shuffled","stress.d_shuffledWithinSubject"),labels=c("Stress","Shuffled\nCross-subj.","Shuffled\nWithin-subj."), expand=expansion(mult = c(0.2,0.2)))
+p = p + stat_compare_means(method="t.test", label.y = c(0.55, 0.60, 0.65), comparisons = list(c("stress.d","stress.d_shuffled"),c("stress.d_shuffled","stress.d_shuffledWithinSubject"),c("stress.d","stress.d_shuffledWithinSubject")))
+#p = p + stat_pvalue_manual(data=p_compare, label="p.format", xmin="group1", xmax="group2", y.position = "y.position")
+p
+ggsave("smape_boxplot.pdf", height=3, width=6)
+
+# Spearman histograms
+p = ggplot(data.sub, aes(x = rho, fill = Label)) + geom_histogram(binwidth = .05)
+p = p + theme_light()  + theme(legend.position = c(0.627, 0.8), legend.background = element_rect(fill="transparent"), panel.background = element_blank(), legend.title=element_blank(), strip.background = element_rect(fill="white"), strip.text = element_text(color="black", face="bold", size=13, hjust=0.5), axis.text.x = element_text(size=12), axis.text.y = element_text(size=13), text = element_text(size=13))
+Model.labs <- c("Elastic Net","Random Forest")
+names(Model.labs) <- c("ElasticNet", "RandomForestRegressor")
+p = p + facet_wrap(~Model, labeller=labeller(Model=Model.labs))
+p = p + xlab("Spearman Rho") + ylab("Subject Count")
+p = p + scale_fill_discrete(breaks=c("stress.d","stress.d_shuffled","stress.d_shuffledWithinSubject"),labels=c("Stress","Shuffled\nCross-subj.","Shuffled\nWithin-subj.")) + scale_colour_discrete(breaks=c("stress.d","stress.d_shuffled","stress.d_shuffledWithinSubject"),labels=c("Stress","Shuffled\nCross-subj.","Shuffled\nWithin-subj."))
+p
+ggsave("spearman_histograms.pdf", height=3, width=6)
+```
+
+#Significance tests
+```{r, warning== F}
+data.sub.cast <- as.data.frame(data.table::dcast(data.table::setDT(data.sub), snapshot_id ~ Model + Label, value.var = c("smape", "rho", "pred.mn", "true.mn")))
+
+t.test(data.sub.cast$smape_ElasticNet_stress.d, data.sub.cast$smape_ElasticNet_stress.d_shuffled, paired = T)
+
+t.test(data.sub.cast$smape_ElasticNet_stress.d, data.sub.cast$smape_ElasticNet_stress.d_shuffledWithinSubject, paired = T)
+
+t.test(data.sub.cast$smape_RandomForestRegressor_stress.d, data.sub.cast$smape_RandomForestRegressor_stress.d_shuffled, paired = T)
+
+t.test(data.sub.cast$smape_RandomForestRegressor_stress.d, data.sub.cast$smape_RandomForestRegressor_stress.d_shuffledWithinSubject, paired = T)
+
+t.test(data.sub.cast$rho_ElasticNet_stress.d, data.sub.cast$rho_ElasticNet_stress.d_shuffled, paired = T)
+
+t.test(data.sub.cast$rho_ElasticNet_stress.d, data.sub.cast$rho_ElasticNet_stress.d_shuffledWithinSubject, paired = T)
+
+t.test(data.sub.cast$rho_RandomForestRegressor_stress.d, data.sub.cast$rho_RandomForestRegressor_stress.d_shuffled, paired = T)
+
+t.test(data.sub.cast$rho_RandomForestRegressor_stress.d, data.sub.cast$rho_RandomForestRegressor_stress.d_shuffledWithinSubject, paired = T)
+
+t.test(data.sub.cast$smape_ElasticNet_stress.d, data.sub.cast$smape_RandomForestRegressor_stress.d, paired = T)
+
+t.test(data.sub.cast$rho_ElasticNet_stress.d, data.sub.cast$rho_RandomForestRegressor_stress.d, paired = T)
+
+t.test(data.sub.cast$true.mn_ElasticNet_stress.d, data.sub.cast$pred.mn_ElasticNet_stress.d, paired = T)
+
+t.test(data.sub.cast$true.mn_RandomForestRegressor_stress.d, data.sub.cast$pred.mn_RandomForestRegressor_stress.d, paired = T)
+
+```
+
+
+#Compare LR rho to rho from Garmin stress and HRV
+```{r, warning = F}
+garmin_vars <- c("avg_garmin_stress")
+hrv_vars <- c("sdann_8_to_6");
+
+#data.comp <- ddply(data.actual.rf, c("snapshot_id", "Model"), summarize, rho.model = cor(True_value, Predicted_value, method = "spearman", use = "pairwise.complete.obs"), rho.garmin = cor(True_value, avg_garmin_stress, method = "spearman", use = "pairwise.complete.obs"), rho.hrv = cor(-True_value, sdann_8_to_6, method = "spearman", use = "pairwise.complete.obs"));
+
+data.comp <- ddply(data.actual.rf, c("snapshot_id", "Model"), summarize, rho.model = cor(True_value, Predicted_value, method = "spearman", use = "pairwise.complete.obs"), rho.garmin = cor(True_value, avg_garmin_stress, method = "spearman", use = "pairwise.complete.obs"));
+
+data.comp.hrv <- ddply(data.actual, c("snapshot_id"), summarize, rho.hrv = cor(-True_value, sdann_8_to_6, method="spearman", use="pairwise.complete.obs"));
+
+data.comp.melt <- melt(data.comp, id = c("snapshot_id", "Model"))
+data.comp.hrv.melt <- melt(data.comp.hrv, id=c("snapshot_id"))
+data.comp.hrv.melt$Model <- "RandomForestRegressor"
+data.comp.melt <- rbind(data.comp.melt, data.comp.hrv.melt)
+
+ddply(data.comp.melt, c("Model", "variable"), summarize, rho.mn = mean(value, na.rm = T), rho.sd = sd(value, na.rm = T))
+
+t.test(subset(data.comp.melt, Model=="RandomForestRegressor" & variable=="rho.model")$value, mu=0, alternative = "two.sided")
+t.test(subset(data.comp.melt, Model=="RandomForestRegressor" & variable=="rho.garmin")$value, mu=0, alternative = "two.sided")
+t.test(subset(data.comp.melt, Model=="RandomForestRegressor" & variable=="rho.hrv")$value, mu=0, alternative = "two.sided")
+
+#Show subject level means/CIs comparing the model, garmin, and HRV rhos
+p_compare <- compare_means(value~variable, data=data.comp.melt, method="t.test", paired=T) %>% mutate(y.position = c(0.78, 0.95, 0.65))
+p_compare$p.format[p_compare$p.adj < 0.001] = "p<0.001"
+p_compare$p.format[p_compare$p.adj >= 0.001] = paste0("p=",p_compare$p.format[p_compare$p.adj >= 0.001])
+
+p = ggplot(data.comp.melt, aes(y = value, x = variable)) + geom_boxplot(aes(fill=variable), width=0.6, outlier.shape=NA) + facet_wrap(~Model) + geom_hline(yintercept = 0, linetype="dashed")
+p = p + theme_light()  + theme(legend.position = "none", panel.background = element_blank(), strip.background = element_rect(fill="white"), strip.text = element_blank(), axis.text.x = element_text(size=10), axis.text.y = element_text(size=10), text = element_text(size=11))
+Model.labs <- c("RF","Garmin", "HRV")
+names(Model.labs) <- c("rho.model", "rho.garmin", "rho.hrv")
+#p = p + facet_wrap(~Model, labeller=labeller(Model=Model.labs))
+p = p + ylim(-0.45, 1.0)
+p = p + ylab("Spearman Rho") + xlab("Stress Model")
+p = p + scale_x_discrete(breaks=c("rho.model", "rho.garmin", "rho.hrv"),labels=c("RF","Garmin", "HRV"),expand=expansion(mult = c(0.2,0.2)))
+#p = p + stat_compare_means(method="t.test", label.y = c(0.65, 0.78, 0.95), comparisons = list(c("rho.garmin","rho.hrv"),c("rho.model", "rho.garmin"),c("rho.model", "rho.hrv")))
+p = p + stat_pvalue_manual(data=p_compare, label="p.format", xmin="group1", xmax="group2", y.position = "y.position")
+p
+ggsave("within_subj_spearman_stress_compare.pdf", height=3, width=5)
+
+#Mixed effects model showing that the model prediction significantly predicts stress after accounting for garmin stress and HRV. We find that both the model and HRV predict self-reorted stress, but the model is a better predictor 
+data.actual.hrv <- subset(data.actual, !is.na(sdann_8_to_6))
+m <- lmer(True_value ~ Predicted_value + avg_garmin_stress + sdann_8_to_6 + (1 | snapshot_id), data = data.actual.hrv)
+tab_model(m, show.std = T, show.est = F)
+
+#Compare the distibutions of the three with means marked
+ggplot(data.comp.melt, aes(x = value, fill = variable))+ geom_histogram(binwidth = .05) + geom_vline(xintercept = mean(data.comp$rho.model, na.rm = T), color = "red") + geom_vline(xintercept = mean(data.comp$rho.garmin, na.rm = T), color= "green") + geom_vline(xintercept = mean(data.comp$rho.hrv, na.rm = T), color = "blue")
+
+# Perform t-tests for each model pair
+#t.test(data.comp$rho.garmin, data.comp$rho.hrv, paired = T)
+#t.test(data.comp$rho.garmin, data.comp$rho.model, paired = T)
+#t.test(data.comp$rho.model, data.comp$rho.hrv, paired = T)
+
+```
+
+
+#IGTBs to show that the model accuracy are mostly independent of demographics
+```{r, warning = F}
+
+data.igtbs <- read.csv(file = "../../dataset/IARPA/data_surveys/igtbs.processed.csv");
+
+data.merged <- as.data.frame(merge(data.sub, data.igtbs, by = "snapshot_id", all = F))
+#data.merged.lr <- subset(data.merged, Model == "ElasticNet" & Label == "stress.d")
+data.merged.rf <- subset(data.merged, Model == "RandomForestRegressor" & Label == "stress.d")
+
+# BB - somehow one snapshot id is duplicated.  Remove it
+dup_id <- "10497196978679838720"
+dup_df <- subset(data.merged.rf, snapshot_id == dup_id)
+dup_row_rf <- c(rownames(dup_df)[2])
+data.merged.rf <- data.merged.rf[!(row.names(data.merged.rf) %in% dup_row_rf), ]
+
+data.merged.rf$gender <- relevel(as.factor(data.merged.rf$gender), ref="Female")
+data.merged.rf$incomeRcd <- relevel(as.factor(data.merged.rf$incomeRcd), ref="<50k")
+data.merged.rf$cohortRcd <- relevel(as.factor(data.merged.rf$cohortRcd), ref="U")
+data.merged.rf$educRcd <- relevel(as.factor(data.merged.rf$educRcd), ref="HS+")
+
+mt <- lm(true.mn ~ n + age + gender + lang  + educRcd + incomeRcd + supervise + cohortRcd - 1, data = data.merged.rf)
+#m1 <- lm(rho ~ n + age + gender + lang  + educRcd + incomeRcd + supervise + cohortRcd, data = data.merged.rf)
+m1 <- lm(pred.mn ~ n + age + gender + lang  + educRcd + incomeRcd + supervise + cohortRcd - 1, data = data.merged.rf)
+m2 <- lm(rho ~ n + age + gender + lang  + educRcd + incomeRcd + supervise + cohortRcd - 1, data = data.merged.rf)
+
+tab_model(mt, m1, m2, show.std = T, show.ci = F, show.est = F)
+```
+
+# Predict IGTB using RF instead of the linear regression above
+```{r, warning = F}
+library(randomForest)
+library(caTools)
+# Encode char columns as numeric
+rf_cols <- c("true.mn", "n", "age","gender","lang","educRcd","supervise","cohortRcd")
+data.merged.rf.igtb <- data.merged.lr[complete.cases(data.merged.lr[,rf_cols]),rf_cols]
+rf_weights = list()
+pred_perf = list()
+for (i in 1:1000) {
+  rf <- randomForest(true.mn ~ n + age + gender + lang + educRcd + supervise + cohortRcd, data=data.merged.rf.igtb, nodesize=1, maxnodes=5, ntree=10)
+  rf_weights[[i]] <- importance(rf)
+  pred <- predict(rf, newdata = data.merged.rf.igtb)
+  pred_rho <- cor(pred, data.merged.rf.igtb$true.mn, method="spearman")
+  pred_perf[[i]] <- pred_rho
+}
+rf_weight_avg <- do.call(cbind, rf_weights)
+rowMeans(rf_weight_avg)
+summary(as.numeric(pred_perf))
+#rf
+#summary(rf)
+#importance(rf)
+
+```

@@ -1,0 +1,47 @@
+---
+title: "PlotSurveyCompliance"
+author: "Brandon"
+date: "February 9, 2021"
+output: html_document
+---
+
+```{r}
+library(sjPlot)
+library(lme4)
+library(ggplot2)
+library(plyr)
+#library(dplyr)
+library(reshape2)
+library(scales)
+library(car)
+library(ggpubr)
+```
+
+#Load data
+```{r, cache = T}
+data_df <- read.csv(file = "../2_FeatureCorrectionAndFilter/results/merge_all_time_summary_not_blinded_outlier_treated_08_12_with_baseline_corrected_non_survey_context_feats.csv")
+```
+
+# Count the number of completed surveys per subject
+```{r}
+tab <- table(data_df$snapshot_id)
+count_df <- as.data.frame(tab)
+sorted_count_df <- count_df[order(count_df[,2]),]
+colnames(sorted_count_df) <- c("id", "surveys")
+sorted_count_df$id <- factor(sorted_count_df$id, levels= sorted_count_df$id)
+```
+
+#Plot distributions
+```{r}
+neutral_color = "#C4C4C4"
+red_color = "#F8766D"
+green_color = "#00BA38"
+blue_color = "#619CFF"
+p = ggplot(sorted_count_df, aes(x=id, y=surveys)) + geom_bar(stat="identity", color="#EAAD2A", fill="#EAAD2A")
+p = p + theme_light() + theme(legend.position = "none", legend.background = element_rect(fill="transparent"), panel.background = element_rect(fill='white', color='white'), panel.grid.major=element_blank(), axis.ticks.x=element_blank(), legend.title=element_blank(), strip.background = element_rect(fill="white", color='white'), strip.text = element_text(color="black", face="bold", size=11, hjust=0.5), axis.text.x = element_blank(), axis.text.y = element_text(size=11), text = element_text(size=11))
+p = p + geom_abline(slope=0, intercept=7, col="blue", lty=2)
+p = p + xlab("Participants") + ylab("Completed Stress Surveys")
+p = p + scale_y_continuous(limits=c(0,83), expand=c(0,0))
+p
+ggsave("survey_compliance.pdf", height=2.5, width=6)
+```
