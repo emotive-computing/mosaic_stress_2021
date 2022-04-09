@@ -675,6 +675,7 @@ mainFolder<- c("../4_MachineLearning/results_all_feats_within_subj", "../4_Machi
 OUTPUTPATH <- "./results/all_feats_within_subj_regressions_LR_RF.csv"
 dfResults <- getIndividualPredictionsDF(mainFolder, originalFeatures, OUTPUTPATH)
 
+# Spearman
 # No context features, cross-subject
 originalFeatures <- "../2_FeatureCorrectionAndFilter/results/merge_all_time_summary_not_blinded_outlier_treated_08_12_with_baseline_corrected_non_survey_context_feats.csv"
 mainFolder<- c("../4_MachineLearning/results_ncx_feats_cross_subj", "../4_MachineLearning/results_ncx_feats_cross_subj_shuffle_baseline", "../4_MachineLearning/results_ncx_feats_cross_subj_shufwtn_baseline")
@@ -685,5 +686,26 @@ dfResults <- getIndividualPredictionsDF(mainFolder, originalFeatures, OUTPUTPATH
 originalFeatures <- "../2_FeatureCorrectionAndFilter/results/merge_all_time_summary_not_blinded_outlier_treated_08_12_with_baseline_corrected_non_survey_context_feats.csv"
 mainFolder<- c("../4_MachineLearning/results_ncx_feats_within_subj", "../4_MachineLearning/results_ncx_feats_within_subj_shuffle_baseline", "../4_MachineLearning/results_ncx_feats_within_subj_shufwtn_baseline")
 OUTPUTPATH <- "./results/ncx_feats_within_subj_regressions_LR_RF.csv"
+dfResults <- getIndividualPredictionsDF(mainFolder, originalFeatures, OUTPUTPATH)
+
+# SMAPE
+# No context features, cross-subject
+originalFeatures <- "../2_FeatureCorrectionAndFilter/results/merge_all_time_summary_not_blinded_outlier_treated_08_12_with_baseline_corrected_non_survey_context_feats.csv"
+mainFolder<- c("../4_MachineLearning/results_ncx_feats_cross_subj_smape", "../4_MachineLearning/results_ncx_feats_cross_subj_shuffle_baseline_smape", "../4_MachineLearning/results_ncx_feats_cross_subj_shufwtn_base_smp")
+OUTPUTPATH <- "./results/ncx_feats_cross_subj_regressions_LR_RF_smape.csv"
+dfResults <- getIndividualPredictionsDF(mainFolder, originalFeatures, OUTPUTPATH)
+
+# No context features, within subject
+# BB - TODO
+#originalFeatures <- "../2_FeatureCorrectionAndFilter/results/merge_all_time_summary_not_blinded_outlier_treated_08_12_with_baseline_corrected_non_survey_context_feats.csv"
+#mainFolder<- c("../4_MachineLearning/results_ncx_feats_within_subj_smape", "../4_MachineLearning/results_ncx_feats_within_subj_shuffle_baseline_smape", "../4_MachineLearning/results_ncx_feats_within_subj_shufwtn_base_smp")
+#OUTPUTPATH <- "./results/ncx_feats_within_subj_regressions_LR_RF_smape.csv"
+#dfResults <- getIndividualPredictionsDF(mainFolder, originalFeatures, OUTPUTPATH)
+
+# Spearman with IGTB
+# No context features, cross-subject
+originalFeatures <- "../2_FeatureCorrectionAndFilter/results/merge_all_time_summary_not_blinded_outlier_treated_08_12_with_baseline_corrected_non_survey_context_feats.csv"
+mainFolder<- c("../4_MachineLearning/results_ncx_feats_cross_subj_w_igtb", "../4_MachineLearning/results_ncx_feats_cross_subj_shuffle_baseline_w_igtb", "../4_MachineLearning/results_ncx_feats_cross_shufwtn_baseline_igtb")
+OUTPUTPATH <- "./results/ncx_feats_cross_subj_regressions_LR_RF_with_IGTB.csv"
 dfResults <- getIndividualPredictionsDF(mainFolder, originalFeatures, OUTPUTPATH)
 

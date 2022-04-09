@@ -20,7 +20,7 @@ library(ggpubr)
 ```{r, cache = T}
 en_weights <- read.csv(file = "./results/ElasticNet_stress.d.csv")$Weights
 rf_weights <- read.csv(file = "./results/RandomForestRegressor_stress.d.csv")$Weights
-feature_names <- read.csv(file = "../2_FeatureCorrectionAndFilter/keep_non_survey_context_cols2.csv", header=FALSE)
+feature_names <- read.csv(file = "../2_FeatureCorrectionAndFilter/keep_non_survey_context_cols3.csv", header=FALSE)
 feature_names <- feature_names$V1[5:nrow(feature_names)]
 ```
 
@@ -60,6 +60,7 @@ en_df_feats <- gsub("^percent_one_0_outliers_treated$", "Duration Near 1+ Partic
 en_df_feats <- gsub("^tp_humidity$", "Humidity", en_df_feats)
 en_df_feats <- gsub("^episodic_relative_to_week$", "HR Percentile Relative to Previous Week", en_df_feats)
 en_df_feats <- gsub("^weekend_duration_difference_adjusted$", "Weekend/Weekday Adjusted Sleep Duration Difference", en_df_feats)
+en_df_feats <- gsub("^usage_last_24hs$", "Phone Session Count over Last 24 Hours", en_df_feats)
 en_df$features <- as.factor(en_df_feats)
 
 
@@ -78,6 +79,7 @@ rf_df_feats <- gsub("^avg_stress$", "Average Garmin Stress", rf_df_feats)
 rf_df_feats <- gsub("^weekend_duration_difference_adjusted_imputed_with_pa$", "Weekend/Weekday PA-Adjusted Sleep Duration Difference", rf_df_feats)
 rf_df_feats <- gsub("^first_home_beacon_pm_90$", "Time of Arrival At Home After 12pm", rf_df_feats)
 rf_df_feats <- gsub("^act_in_vehicle_ep_2$", "In Vehicle Between 9am-6pm ", rf_df_feats)
+rf_df_feats <- gsub("^usage_last_24hs$", "Phone Session Count over Last 24 Hours", rf_df_feats)
 rf_df$features <- as.factor(rf_df_feats)
 
 en_df$features <- factor(en_df$features, levels = rev(en_df$features))
@@ -96,7 +98,7 @@ p = p + theme_light() + theme(legend.position = "none", legend.background = elem
 p = p + scale_fill_manual(values=c(blue_color,neutral_color,green_color,neutral_color,neutral_color,neutral_color,neutral_color,neutral_color,neutral_color,neutral_color,neutral_color,neutral_color,neutral_color,neutral_color,"#F8766D"))
 p = p + xlab("") + ylab("Top EN Features")
 p = p + coord_flip()
-p = p + scale_y_continuous(breaks=seq(-0.15,0,by=0.05), labels=abs(seq(-0.15,0,by=0.05)), limits=c(-0.15,0))
+p = p + scale_y_continuous(breaks=seq(-0.24,0,by=0.08), labels=abs(seq(-0.24,0,by=0.08)), limits=c(-0.24,0))
 p
 ggsave("en_feature_importance.pdf", height=4, width=6)
 
@@ -106,7 +108,7 @@ p = p + scale_fill_manual(values=c(neutral_color,neutral_color,neutral_color,neu
 p = p + xlab("") + ylab("Top RF Features")
 p = p + coord_flip()
 p = p + scale_x_discrete(position = "top")
-p = p + ylim(0,0.064)
+p = p + ylim(0,0.06)
 p
 ggsave("rf_feature_importance.pdf", height=4, width=6)
 ```
