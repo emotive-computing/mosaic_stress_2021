@@ -1,8 +1,11 @@
 import os
 import sys
+import numpy as np
+import pandas as pd
 from collections.abc import Iterable
 from .stage_base import StageBase
 from ..utils.utils import get_any_scoring_func
+from ..log.logger import Logger
 
 class EvaluationStage(StageBase):
     def __init__(self, eval_idx=None):
@@ -21,14 +24,12 @@ class EvaluationStage(StageBase):
                 raise ValueError("Test indices exceed bounds of the data size in {}".format(type(self).__name__))
         if not isinstance(self._eval_context, SupervisedEvaluationContext):
             raise ValueError("Evaluation context must be a subclass of {}".format(type(SupervisedEvaluationContext).__name__))
-        if not isinstance(self._eval_context.y_label, str) and len(self._eval_context.y_label) > 1:
-            raise ValueError("Multi-target evaluation is not supported yet. Ensure only one label is provided to {}".format(type(self).__name__))
 
         self._eval_context.validate()
         return
 
     def _execute(self, dc):
-        self.logInfo("Running Model Evaluation Stage")
+        Logger.getInst().info("Running Model Evaluation Stage")
         data = dc.get_item('data')
 
         if self._eval_idx is None:
@@ -36,7 +37,7 @@ class EvaluationStage(StageBase):
                 cv_splits = dc.get_item('cv_splits')
                 self._eval_idx = cv_splits[1]
             except:
-                self._logInfo("Evaluation stage will be applied to entire data set.  Are you sure this is right?")
+                Logger.getInst().info("Evaluation stage will be applied to entire data set.  Are you sure this is right?")
                 self._eval_idx = list(range(data.shape[0]))
 
         eval_data = data.iloc[self._eval_idx,:]
@@ -44,11 +45,15 @@ class EvaluationStage(StageBase):
         eval_func_names = self._eval_context.get_eval_func_names()
         eval_results = {}
 
-        y_label = self._eval_context.y_label # TODO: support multi-target labels?
+        label_cols = self._eval_context.label_cols
 
         for i in range(len(self._eval_context.eval_funcs)):
             eval_func = self._eval_context.eval_funcs[i]
-            eval_labels = eval_data[y_label].values.flatten()
+            eval_labels = eval_data[label_cols].values
+            if eval_labels.ndim > 1 and eval_labels.shape[1] == 1:
+                eval_labels = eval_labels.flatten()
+            if isinstance(preds, np.ndarray) and preds.ndim > 1 and preds.shape[1] == 1:
+                preds = preds.flatten()
             eval_value = eval_func(eval_labels, preds)
             eval_results[eval_func_names[i]] = eval_value
 
@@ -106,23 +111,27 @@ class EvaluationContext():
 class SupervisedEvaluationContext(EvaluationContext):
     def __init__(self):
         super().__init__()
-        self._y_label = None
+        self._label_cols = None
         return
 
-    def get_y_label(self):
-        return self._y_label
+    def get_label_cols(self):
+        return self._label_cols
 
-    def set_y_label(self, labels):
-        if isinstance(labels, str) or isinstance(labels, Iterable):
-            self._y_label = labels
+    def set_label_cols(self, labels):
+        if isinstance(labels, pd.DataFrame):
+            self._label_cols = labels.values.flatten()
+        elif isinstance(labels, np.ndarray):
+            self._label_cols = labels.flatten()
+        elif isinstance(labels, str) or isinstance(labels, Iterable):
+            self._label_cols = labels
         else:
             raise ValueError('labels argument must be Iterable or string type')
         return
 
     def validate(self):
         super().validate()
-        if not isinstance(self._y_label, str) and not isinstance(self._y_label, Iterable):
-            raise TypeError("y_label must be initialized to Iterable or string type")
+        if not isinstance(self._label_cols, str) and not isinstance(self._label_cols, Iterable):
+            raise TypeError("label_cols must be initialized to Iterable or string type")
         return
 
-    y_label = property(get_y_label, set_y_label)
+    label_cols = property(get_label_cols, set_label_cols)

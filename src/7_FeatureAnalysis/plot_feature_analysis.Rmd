@@ -10,6 +10,7 @@ library(sjPlot)
 library(lme4)
 library(ggplot2)
 library(plyr)
+library(dplyr)
 library(reshape2)
 library(scales)
 library(car)
@@ -21,6 +22,7 @@ library(ggpubr)
 en_weights <- read.csv(file = "./results/ElasticNet_stress.d.csv")$Weights
 rf_weights <- read.csv(file = "./results/RandomForestRegressor_stress.d.csv")$Weights
 feature_names <- read.csv(file = "../2_FeatureCorrectionAndFilter/keep_non_survey_context_cols3.csv", header=FALSE)
+data_with_igtb <- read.csv(file = "../2_FeatureCorrectionAndFilter/results/merge_all_time_summary_not_blinded_outlier_treated_08_12_with_baseline_corrected_non_survey_context_feats_w_igtb.csv");
 feature_names <- feature_names$V1[5:nrow(feature_names)]
 ```
 
@@ -113,3 +115,20 @@ p
 ggsave("rf_feature_importance.pdf", height=4, width=6)
 ```
 
+# Plot STAI distribution
+```{r}
+neutral_color = "#C4C4C4"
+red_color = "#F8766D"
+green_color = "#00BA38"
+blue_color = "#619CFF"
+uids <- unique(data_with_igtb$snapshot_id);
+data_plot_stai <- distinct(data_with_igtb, snapshot_id, .keep_all=T)
+p = ggplot(data_plot_stai, aes(x=stai.trait)) + geom_histogram(color=green_color, fill=green_color)
+p = p + theme_light() + theme(legend.position = "none", legend.background = element_rect(fill="transparent"), panel.background = element_rect(fill='white', color='white'), panel.grid.major=element_blank(), axis.ticks.x=element_blank(), legend.title=element_blank(), strip.background = element_rect(fill="white", color='white'), strip.text = element_text(color="black", face="bold", size=11, hjust=0.5), axis.text.y = element_text(size=11), text = element_text(size=11))
+#p = p + geom_abline(slope=0, intercept=7, col="blue", lty=2)
+p = p + ylab("# Participants") + xlab("STAI Survey Scores")
+#p = p + scale_y_continuous(limits=c(0,83), expand=c(0,0))
+#p = p + scale_x_continuous(limits=c(0,nrow(sorted_count_df)+2), expand=c(0,0))
+p
+ggsave("stai_survey_dist.pdf", height=2.5, width=6)
+```

@@ -1,9 +1,11 @@
 import os
 import sys
 import copy
+import pickle
 import numpy as np
 import pandas as pd
 from inspect import signature
+from tensorflow import keras
 from skorch.net import NeuralNet
 from abc import ABCMeta, abstractmethod
 from commonmodels2.utils.utils import *
@@ -39,6 +41,14 @@ class ModelBase(metaclass=ABCMeta):
     def set_params(self, params):
         self._params = copy.deepcopy(params)
 
+    def load(self, file_path):
+        if not os.path.isdir(os.path.dirname(file_path)):
+            raise ValueError("Cannot load model from '%s' because file does not exist"%(file_path))
+
+    def save(self, out_folder, file_name):
+        if not os.path.isdir(out_folder):
+            os.makedirs(out_folder)
+
     def finalize(self):
         self._model = self._model_create_fn(self._params)
         self._finalized = True
@@ -69,6 +79,23 @@ class SklearnModel(ModelBase):
     def set_model_params(self, model_params):
         self._model_params = model_params
 
+    def load(self, file_path):
+        super().load(file_path)
+        with open(file_path, "rb") as in_file:
+            self._model = pickle.load(out_file)
+        self._finalized = True
+
+    def save(self, out_folder, file_name):
+        super().save(out_folder, file_name)
+        if not file_name.endswith('.pkl'):
+            if '.' in file_name:
+                file_name = file_name.split('.')[0]+'.pkl'
+            else:
+                file_name = file_name+'.pkl'
+        file_path = os.path.join(out_folder, file_name)
+        with open(file_path, "wb") as out_file:
+            pickle.dump(self._model, out_file)
+
     def finalize(self):
         self.params = self.model_params
         super().finalize()
@@ -92,6 +119,8 @@ class TensorFlowModel(ModelBase):
         self._compile_params = {}
         self._predict_params = {}
         self._fit_params = {}
+        self._fit_transformer_fn = None
+        self._pred_transformer_fn = None
 
     def set_params(self, params):
         if params.get('model'):
@@ -127,6 +156,40 @@ class TensorFlowModel(ModelBase):
     def set_predict_params(self, predict_params):
         self._predict_params = predict_params
 
+    def set_fit_transformer(self, data_trans_func):
+        sig = signature(data_trans_func)
+        if len(sig.parameters) != 2:
+            raise ValueError("data_transformer_fn must accept two arguments: X (data) and y (labels)")
+        for param_idx in range(2):
+            param = [v for v in sig.parameters.values()][param_idx]
+            if not (param.kind == param.POSITIONAL_ONLY or param.kind == param.POSITIONAL_OR_KEYWORD):
+                raise ValueError("data_transformer_fn must have similar prototype to `def func(X, y):`")
+        if not (param.default is param.empty):
+            raise ValueError("data_transformer_fn argument cannot have default value")
+        self._fit_transformer_fn = data_trans_func
+
+    def set_prediction_transformer(self, pred_trans_func):
+        sig = signature(pred_trans_func)
+        if len(sig.parameters) != 1:
+            raise ValueError("pred_transformer_fn must accept one argument: y_pred (labels)")
+        for param_idx in range(1):
+            param = [v for v in sig.parameters.values()][param_idx]
+            if not (param.kind == param.POSITIONAL_ONLY or param.kind == param.POSITIONAL_OR_KEYWORD):
+                raise ValueError("pred_transformer_fn must have similar prototype to `def func(y_pred):`")
+        if not (param.default is param.empty):
+            raise ValueError("pred_transformer_fn argument cannot have default value")
+        self._pred_transformer_fn = pred_trans_func
+
+    def load(self, file_path):
+        super().load(file_path)
+        self._model = keras.models.load_model(file_path)
+        self._finalized = True
+
+    def save(self, out_folder, file_name):
+        super().save(out_folder, file_name)
+        file_path = os.path.join(out_folder, file_name)
+        self._model.save(file_path)
+
     def finalize(self):
         self.params = self.model_params
         super().finalize()
@@ -137,12 +200,24 @@ class TensorFlowModel(ModelBase):
 
     def fit(self, X, y):
         super().fit(X, y)
-        self._model.fit(X, y, **self._fit_params) 
+        if self._fit_transformer_fn is not None:
+            trans_X, trans_y = self._fit_transformer_fn(X, y)
+            self._model.fit(trans_X, trans_y, **self._fit_params) 
+        else:
+            self._model.fit(X, y, **self._fit_params) 
         return self._model
 
     def predict(self, X):
         super().predict(X)
-        preds = self._model.predict(X, **self._predict_params)
+        if self._fit_transformer_fn is not None:
+            trans_X, trans_y = self._fit_transformer_fn(X, None)
+            preds = self._model.predict(trans_X, **self._predict_params)
+        else:
+            preds = self._model.predict(X, **self._predict_params)
+
+        if self._pred_transformer_fn is not None:
+            preds = self._pred_transformer_fn(preds)
+
         return preds
 
     model_params = property(get_model_params, set_model_params)
@@ -157,6 +232,8 @@ class PyTorchModel(ModelBase):
         self._optimizer_params = None
         self._criterion_params = None
         self._fit_params = None
+        self._fit_transformer_fn = PyTorchModel._default_fit_transformer
+        self._pred_transformer_fn = None
     
     def set_params(self, params):
         if params.get('model'):
@@ -222,23 +299,75 @@ class PyTorchModel(ModelBase):
             user_params.update(fit_params)
         self._model = NeuralNet(self._model,loss_fn,optimizer=optim_fn,**user_params)
 
-    def _transform_x_data(self, X):
+    @classmethod
+    def _default_fit_transformer(cls, X, y):
+        new_X = X
         if isinstance(X,pd.DataFrame):
-            data = X.to_numpy(dtype=np.float32)
+            # BB - pytorch doesn't like using float64 tensors (X) with float64 labels (y), so
+            #      stick to float32 for now
+            #best_type = np.float64 if np.any(X.dtypes == np.float64) else np.float32
+            best_type = np.float32
+            new_X = X.to_numpy(dtype=best_type)
         elif isinstance(X,np.ndarray):
-            data = X.astype(np.float32)
-        return data
+            best_type = X.dtype
+            new_X = X.astype(best_type)
 
-    def _transform_y_data(self, y):
+        new_y = y
         if isinstance(y,pd.DataFrame):
-            data = y.to_numpy(dtype=np.float32)
+            best_type = np.float64 if np.any(y.dtypes == np.float64) else np.float32
+            new_y = y.to_numpy(dtype=best_type)
         elif isinstance(y, pd.Series):
-            data = y.to_numpy(dtype=np.float32)
+            best_type = y.dtype
+            new_y = y.to_numpy(dtype=best_type)
         elif isinstance(y, np.ndarray):
-            data = y.astype(np.float32)
+            best_type = y.dtype
+            new_y = y.astype(best_type)
         elif isinstance(y, list):
-            data = np.array(y).astype(np.float32)
-        return data
+            best_type = np.float64 if np.any([type(elem) == np.float64 for elem in y]) else np.float32
+            new_y = np.array(y).astype(best_type)
+
+        return new_X, new_y
+
+    def set_fit_transformer(self, data_trans_func):
+        sig = signature(data_trans_func)
+        if len(sig.parameters) != 2:
+            raise ValueError("data_transformer_fn must accept two arguments: X (data) and y (labels)")
+        for param_idx in range(2):
+            param = [v for v in sig.parameters.values()][param_idx]
+            if not (param.kind == param.POSITIONAL_ONLY or param.kind == param.POSITIONAL_OR_KEYWORD):
+                raise ValueError("data_transformer_fn must have similar prototype to `def func(X, y):`")
+        if not (param.default is param.empty):
+            raise ValueError("data_transformer_fn argument cannot have default value")
+        self._fit_transformer_fn = data_trans_func
+
+    def set_prediction_transformer(self, pred_trans_func):
+        sig = signature(pred_trans_func)
+        if len(sig.parameters) != 1:
+            raise ValueError("pred_transformer_fn must accept one argument: y_pred (labels)")
+        for param_idx in range(1):
+            param = [v for v in sig.parameters.values()][param_idx]
+            if not (param.kind == param.POSITIONAL_ONLY or param.kind == param.POSITIONAL_OR_KEYWORD):
+                raise ValueError("pred_transformer_fn must have similar prototype to `def func(y_pred):`")
+        if not (param.default is param.empty):
+            raise ValueError("pred_transformer_fn argument cannot have default value")
+        self._pred_transformer_fn = pred_trans_func
+
+    def load(self, file_path):
+        super().load(file_path)
+        with open(file_path, "rb") as in_file:
+            self._model = pickle.load(out_file)
+        self._finalized = True
+
+    def save(self, out_folder, file_name):
+        super().save(out_folder, file_name)
+        if not file_name.endswith('.pkl'):
+            if '.' in file_name:
+                file_name = file_name.split('.')[0]+'.pkl'
+            else:
+                file_name = file_name+'.pkl'
+        file_path = os.path.join(out_folder, file_name)
+        with open(file_path, "wb") as out_file:
+            pickle.dump(self._model, out_file)
 
     def finalize(self):
         self.params = self.model_params
@@ -249,19 +378,25 @@ class PyTorchModel(ModelBase):
             raise RuntimeError("Failed to compile PyTorchModel with exception: {}".format(str(e)))
 
     def fit(self, X, y):
-        # Pass in parameters for fit loop
         super().fit(X,y)
-        X = self._transform_x_data(X)
-        self._model.fit(X, y)
-        Logger.getInst().info(f"Model Parameters: {self._model.get_params_for('module')}")
-        Logger.getInst().info(f"Fit Parameters: {self._model.get_params_for('iterator')}")
-        Logger.getInst().info(f"Optimizer Parameters: {self._model.get_params_for('optimizer')}")
+        if self._fit_transformer_fn is not None:
+            trans_X, trans_y = self._fit_transformer_fn(X, y)
+            self._model.fit(trans_X, trans_y)
+        else:
+            self._model.fit(X, y)
         return self._model
 
     def predict(self, X):
         super().predict(X)
-        X = self._transform_x_data(X)
-        preds = self._model.predict(X)
+        if self._fit_transformer_fn is not None:
+            trans_X, trans_y = self._fit_transformer_fn(X, None)
+            preds = self._model.predict(trans_X)
+        else:
+            preds = self._model.predict(X)
+
+        if self._pred_transformer_fn is not None:
+            preds = self._pred_transformer_fn(preds)
+
         return preds
 
     model_params = property(get_model_params, set_model_params)

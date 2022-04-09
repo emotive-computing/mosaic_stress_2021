@@ -1,29 +1,108 @@
-from sklearn.metrics import get_scorer, SCORERS
+import copy
+import torch
+import numpy as np
+import pandas as pd
+from collections.abc import Iterable
+from sklearn.metrics import get_scorer, SCORERS, f1_score
+from sklearn.preprocessing import OneHotEncoder
 from tensorflow.keras import losses
 from tensorflow.keras.losses import get as get_loss
 from tensorflow.keras.metrics import get as get_metric
 from tensorflow.keras.optimizers import get as get_optimizer
-import torch
+
+# Takes a df and one-hot encodes each column in cols. Returns the new df with the cols replaces by the new
+# one-hot encoded columns and also returns a list of the new column names
+def one_hot_encode_cols(df, cols):
+    encoded_dfs = []
+    for col in cols:
+        encoder = OneHotEncoder()
+        col_to_encode = df.loc[:,[col]].astype('category')
+        encoded_cols = encoder.fit_transform(col_to_encode)
+        encoded_df = pd.DataFrame(data=encoded_cols.toarray(), columns=encoder.get_feature_names_out())
+        encoded_dfs.append(encoded_df)
+
+    all_encoded_dfs = pd.concat(encoded_dfs, axis=1)
+    out_col_names = all_encoded_dfs.columns
+    out_df = df.drop(cols, axis=1)
+    out_df = pd.concat((out_df, all_encoded_dfs), axis=1)
+    return out_df, out_col_names
+
+# Takes a df where the entries within a column are multidimensions (e.g. nested lists)
+# and flattens them so each item in the list gets its own column name in the df. Returns the
+# new df and a list of column names associated with the flattened cols.
+def flatten_df_cols(df, cols):
+    my_df = copy.copy(df)
+    if not isinstance(cols, Iterable):
+        cols = [cols]
+
+    best_dtype = None
+    if isinstance(df[cols].iloc[0,0], np.ndarray):
+        best_dtype = df[cols].iloc[0,0].dtype
+
+    flattened_cols = []
+    for col in cols:
+        col_to_flatten = df[col]
+        item_list = []
+        for entry in col_to_flatten:
+            item_list.append(entry.flatten())
+        flattened_col_df = pd.DataFrame(data=item_list, columns=[col+'_'+str(i) for i in range(len(item_list[0]))])
+        if best_dtype is not None:
+            flattened_col_df = flattened_col_df.astype(best_dtype)
+        flattened_cols.extend(flattened_col_df.columns)
+        my_df = my_df.loc[:, df.columns != col] # Remove col
+        my_df = pd.concat((my_df, flattened_col_df), axis=1) # Add new flattened columns
+    return my_df, flattened_cols
+
+def smape(true, pred):
+    return np.sum(2*np.abs(true - pred)/(np.abs(true) + np.abs(pred)))/len(true)
+
+def f1_micro(true, pred):
+    return f1_score(true, pred, average='micro')
+
+def f1_macro(true, pred):
+    return f1_score(true, pred, average='macro')
+
+def f1_weighted(true, pred):
+    return f1_score(true, pred, average='weighted')
+
+def get_custom_scoring_func(func_str):
+    func_str = func_str.lower()
+    scoring_func = None
+    if func_str == 'smape':
+        scoring_func = smape
+    else:
+        raise ValueError('Unable to map string "{}" to a custom scoring function'.format(func_str))
+    return scoring_func
 
 def get_any_scoring_func(func_str):
     try:
-        scoring_func = get_sklearn_scoring_func(func_str)
+        scoring_func = get_custom_scoring_func(func_str)
     except:
         try:
-            scoring_func =  get_tensorflow_loss_func(func_str)
+            scoring_func = get_sklearn_scoring_func(func_str)
         except:
-            raise RuntimeError('Unable to map string "{}" to scoring function'.format(func_str))
+            try:
+                scoring_func =  get_tensorflow_loss_func(func_str)
+            except:
+                raise RuntimeError('Unable to map string "{}" to scoring function'.format(func_str))
     return scoring_func
 
 def get_sklearn_scoring_func(scoring_str):
     if scoring_str in SCORERS.keys():   
-        scorer = get_scorer(scoring_str)
-        # BB - Accessing the private _score_func can lead to weird side-effects! Please be aware
-        # this approach may not work for all scoring functions:
-        # https://stackoverflow.com/questions/63943410/getting-a-scoring-function-by-name-in-scikit-learn
-        scoring_ref = scorer._score_func
-        if scoring_str.startswith('neg_'):
-            scoring_ref = lambda x,y: -scoring_ref(x,y)
+        if scoring_str == 'f1_micro': # BB - get_scorer() doesn't work right for f1 functions, so use ours
+            return f1_micro
+        elif scoring_str == 'f1_macro':
+            return f1_macro
+        elif scoring_str == 'f1_weighted':
+            return f1_weighted
+        else:
+            scorer = get_scorer(scoring_str)
+            # BB - Accessing the private _score_func can lead to weird side-effects! Please be aware
+            # this approach may not work for all scoring functions:
+            # https://stackoverflow.com/questions/63943410/getting-a-scoring-function-by-name-in-scikit-learn
+            scoring_ref = scorer._score_func
+            if scoring_str.startswith('neg_'):
+                scoring_ref = lambda x,y: -scoring_ref(x,y)
         return scoring_ref
     else:
         raise ValueError("Scoring func {} not supported by ScikitLearn".format(scoring_str))
@@ -184,4 +263,3 @@ def get_torch_optimizer(optimizer):
             raise ValueError(f"Couldn't map string to pytorch optimizer. Try one of the following: {torch_optimizer_strs} or pass in a torch.optim.Optimizer class")
     else:
         raise ValueError(f"Optimizer must be a torch.optim.Optimizer subclass or a string")
-        

@@ -1,4 +1,7 @@
 library(maditr)
+library(dplyr)
+library(tidyselect)
+library(stringr)
 
 getMainFolderName <- function(mainFolder)
 {
@@ -663,6 +666,96 @@ getIndividualPredictionsDF <- function(mainFolders, originalFeatures, OUTPUTPATH
   dfOutcome
 }
 
+addNeuralModelPredictions <- function(modelName, neuralModelFolders, originalFeatures, OUTPUTPATH)
+{
+  dfInputFeatures <- read.table(file= originalFeatures, sep=",", header=TRUE, stringsAsFactors = FALSE)
+  
+  # Stress daily summary with Garmin's stress
+  dfStressSummaries <- read.table(file="../../dataset/IARPA/data_surveys/stress_daily_summary.csv", header=TRUE, sep=",", stringsAsFactors = FALSE)
+  
+  # Original feature set
+  dfFeatures.fullset <- read.csv("../../dataset/IARPA/data_surveys/merge_all_time_summary_not_blinded_outlier_treated_08_12.csv", stringsAsFactors=FALSE)
+  dfFeatures.nonblinded <- dfFeatures.fullset[!is.na(dfFeatures.fullset$stress.d),]
+  rownames(dfFeatures.nonblinded) <- NULL
+  dfFeatures.nonblinded['id'] <- seq(1, dim(dfFeatures.nonblinded)[1])
+  
+  # MERGE with Garmin's stress score 
+  colnames(dfStressSummaries)[colnames(dfStressSummaries) == "avg_stress"] <- "avg_garmin_stress"
+  dfFeatures.nonblinded.stress <- merge(dfFeatures.nonblinded, dfStressSummaries[c("snapshot_id","date","avg_garmin_stress")],  by=c("snapshot_id","date"), all.x = TRUE)
+  
+  df.data <- read.csv("../2_FeatureCorrectionAndFilter/results/merge_all_time_summary_not_blinded_outlier_treated_08_12_with_baseline_corrected_non_survey_context_feats.csv", header=TRUE, sep=",", stringsAsFactors = FALSE)
+  
+  dfOutcome <- data.frame()
+  for (neuralModelFolder in neuralModelFolders)
+  {
+    labelName <- "stress.d"
+    if (grepl("shuffle", neuralModelFolder, fixed=TRUE)) {
+      labelName <- "stress.d_shuffled"
+    } else if (grepl("shufwtn", neuralModelFolder, fixed=TRUE)) {
+      labelName <- "stress.d_shuffledWithinSubject"
+    }
+    
+    # Read the predictions
+    if (file.exists(file.path(neuralModelFolder, "preds.csv"))) {
+      df <- read.csv(file.path(neuralModelFolder, "preds.csv"))
+    } else if (file.exists(file.path(neuralModelFolder, "cv_results")) || file.exists(file.path(neuralModelFolder, "nested_cv_results"))) {
+      cv_results_dir <- "nested_cv_results"
+      if (file.exists(file.path(neuralModelFolder, "cv_results"))) {
+        cv_results_dir <- "cv_results"
+      }
+      data_df <- read.csv(file.path(neuralModelFolder, "data.csv"))
+      df <- data.frame(Prediction = numeric(nrow(data_df)), Fold = character(nrow(data_df)))
+      cv_folds_df <- read.csv(file.path(neuralModelFolder, "cv_splits.csv"))
+      test_cv_folds_df  = cv_folds_df %>% select(matches("_test"))
+      test_fold_names <- colnames(test_cv_folds_df)
+      for (test_fold_name in test_fold_names) {
+        test_fold_str <- str_split(test_fold_name, "_")[[1]][1]
+        pred_fold_df <- read.csv(file.path(neuralModelFolder, cv_results_dir, test_fold_str, "predictions.csv"))
+        cv_fold_idx <- cv_folds_df[,test_fold_name]
+        cv_fold_idx <- cv_fold_idx[!is.na(cv_fold_idx)]
+        cv_fold_idx <- cv_fold_idx + 1 # one-based indexing
+        df[cv_fold_idx,'Prediction'] <- pred_fold_df[,'Predictions']
+        df[cv_fold_idx, 'Fold'] <- test_fold_str
+      }
+    }
+    df$Model <- modelName
+    df$Label <- labelName
+    df$Feature_source <- "RegularFeatureInput"
+    df$True_value <- df.data[,labelName] # Predictions are in the same order as stress labels in this file
+    df$Predicted_value <- df[,'Prediction']
+    df <- df %>% select(-Prediction,-Fold)
+      
+    #dfMerged.0 <- cbind(df, dfFeatures.nonblinded.stress[c("id","snapshot_id","date","alc_status","alc.quantity.d","anxiety.d","extraversion.d","agreeableness.d","conscientiousness.d","neuroticism.d","openness.d","work_status","ocb.d","cwb.d","total.pa.d","irb.d","itp.d","pos.affect.d","neg.affect.d","sleep.d","stress.d","tob_status","tob.quantity.d","ave_stress_5min_beforesent", "ave_stress_5min_toend","avg_garmin_stress")])
+    dfMerged.0 <- cbind(df, df.data[c('snapshot_id', 'date')])
+    
+    dfOutcome <- rbind(dfOutcome, dfMerged.0)
+  }
+  
+  #data.check <- dcast(dfOutcome, Model ~ Label, value.var="Label", fun.aggregate=length) 
+  
+  # remove the overall baseline
+  # dfOutcome.2 <- dfOutcome[dfOutcome$Label != "stress_shuffledAll",]
+  
+  # copy the true labels back to randomized baseline (I disagree with it)
+  #dfOutcome$True_value[dfOutcome$Label == "stress.d_shuffledWithinSubject"] <- dfOutcome$True_value[dfOutcome$Label == "stress.d"] 
+  
+  # data check
+  #sum(dfOutcome$True_value[dfOutcome$Label == "stress.d_shuffledWithinSubject"] == dfOutcome$True_value[dfOutcome$Label == "stress.d"]) 
+  #data.check <- dcast(dfOutcome, Model ~ Label, value.var="Label", fun.aggregate=length) 
+  
+  dfToPrepend <- read.csv(OUTPUTPATH)
+  curCols <- colnames(dfOutcome)
+  dfOutcome$id <- seq(max(dfToPrepend$id)+1, max(dfToPrepend$id)+nrow(dfOutcome))
+  dfOutcome$date <- format(strptime(dfOutcome$date, "%m/%d/%Y"), "%Y-%m-%d")
+  dfOutcome <- dfOutcome[, c("id", curCols)]
+  missingCols <- colnames(dfToPrepend)
+  missingCols <- missingCols[!(missingCols %in% colnames(dfOutcome))]
+  dfOutcome[,missingCols] <- NA
+  dfOutcome <- rbind(dfToPrepend, dfOutcome)
+  write.table(dfOutcome, OUTPUTPATH, sep = ",", row.name = FALSE)
+  dfOutcome
+}
+
 # All features, cross-subject
 originalFeatures <- "../2_FeatureCorrectionAndFilter/results/merge_all_time_summary_not_blinded_outlier_treated_08_12_with_baseline_corrected_all_feats.csv"
 mainFolder<- c("../4_MachineLearning/results_all_feats_cross_subj", "../4_MachineLearning/results_all_feats_cross_subj_shuffle_baseline", "../4_MachineLearning/results_all_feats_cross_subj_shufwtn_baseline")
@@ -682,6 +775,15 @@ mainFolder<- c("../4_MachineLearning/results_ncx_feats_cross_subj", "../4_Machin
 OUTPUTPATH <- "./results/ncx_feats_cross_subj_regressions_LR_RF.csv"
 dfResults <- getIndividualPredictionsDF(mainFolder, originalFeatures, OUTPUTPATH)
 
+neuralModelFolders <- c("../4_MachineLearning/cm2_results_ncx_feats_cross_subj_mlp", "../4_MachineLearning/cm2_results_ncx_feats_cross_subj_mlp_shuffle_baseline", "../4_MachineLearning/cm2_results_ncx_feats_cross_subj_mlp_shufwtn_baseline")
+dfResults <- addNeuralModelPredictions("MLP", neuralModelFolders, originalFeatures, OUTPUTPATH)
+
+neuralModelFolders <- c("../4_MachineLearning/cm2_results_ncx_feats_cross_subj_gru", "../4_MachineLearning/cm2_results_ncx_feats_cross_subj_gru_shuffle_baseline", "../4_MachineLearning/cm2_results_ncx_feats_cross_subj_gru_shufwtn_baseline")
+dfResults <- addNeuralModelPredictions("GRU", neuralModelFolders, originalFeatures, OUTPUTPATH)
+
+neuralModelFolders <- c("../4_MachineLearning/cm2_results_ncx_feats_cross_subj_lstm3", "../4_MachineLearning/cm2_results_ncx_feats_cross_subj_lstm3_shuffle_baseline", "../4_MachineLearning/cm2_results_ncx_feats_cross_subj_lstm3_shufwtn_baseline")
+dfResults <- addNeuralModelPredictions("LSTM", neuralModelFolders, originalFeatures, OUTPUTPATH)
+
 # No context features, within subject
 originalFeatures <- "../2_FeatureCorrectionAndFilter/results/merge_all_time_summary_not_blinded_outlier_treated_08_12_with_baseline_corrected_non_survey_context_feats.csv"
 mainFolder<- c("../4_MachineLearning/results_ncx_feats_within_subj", "../4_MachineLearning/results_ncx_feats_within_subj_shuffle_baseline", "../4_MachineLearning/results_ncx_feats_within_subj_shufwtn_baseline")
@@ -695,6 +797,15 @@ mainFolder<- c("../4_MachineLearning/results_ncx_feats_cross_subj_smape", "../4_
 OUTPUTPATH <- "./results/ncx_feats_cross_subj_regressions_LR_RF_smape.csv"
 dfResults <- getIndividualPredictionsDF(mainFolder, originalFeatures, OUTPUTPATH)
 
+neuralModelFolders <- c("../4_MachineLearning/cm2_results_ncx_feats_cross_subj_mlp", "../4_MachineLearning/cm2_results_ncx_feats_cross_subj_mlp_shuffle_baseline", "../4_MachineLearning/cm2_results_ncx_feats_cross_subj_mlp_shufwtn_baseline")
+dfResults <- addNeuralModelPredictions("MLP", neuralModelFolders, originalFeatures, OUTPUTPATH)
+
+neuralModelFolders <- c("../4_MachineLearning/cm2_results_ncx_feats_cross_subj_gru", "../4_MachineLearning/cm2_results_ncx_feats_cross_subj_gru_shuffle_baseline", "../4_MachineLearning/cm2_results_ncx_feats_cross_subj_gru_shufwtn_baseline")
+dfResults <- addNeuralModelPredictions("GRU", neuralModelFolders, originalFeatures, OUTPUTPATH)
+
+neuralModelFolders <- c("../4_MachineLearning/cm2_results_ncx_feats_cross_subj_lstm3", "../4_MachineLearning/cm2_results_ncx_feats_cross_subj_lstm3_shuffle_baseline", "../4_MachineLearning/cm2_results_ncx_feats_cross_subj_lstm3_shufwtn_baseline")
+dfResults <- addNeuralModelPredictions("LSTM", neuralModelFolders, originalFeatures, OUTPUTPATH)
+
 # No context features, within subject
 # BB - TODO
 #originalFeatures <- "../2_FeatureCorrectionAndFilter/results/merge_all_time_summary_not_blinded_outlier_treated_08_12_with_baseline_corrected_non_survey_context_feats.csv"
@@ -705,7 +816,7 @@ dfResults <- getIndividualPredictionsDF(mainFolder, originalFeatures, OUTPUTPATH
 # Spearman with IGTB
 # No context features, cross-subject
 originalFeatures <- "../2_FeatureCorrectionAndFilter/results/merge_all_time_summary_not_blinded_outlier_treated_08_12_with_baseline_corrected_non_survey_context_feats.csv"
-mainFolder<- c("../4_MachineLearning/results_ncx_feats_cross_subj_w_igtb", "../4_MachineLearning/results_ncx_feats_cross_subj_shuffle_baseline_w_igtb", "../4_MachineLearning/results_ncx_feats_cross_shufwtn_baseline_igtb")
-OUTPUTPATH <- "./results/ncx_feats_cross_subj_regressions_LR_RF_with_IGTB.csv"
+mainFolder<- c("../4_MachineLearning/results_ncx_feats_cross_subj_w_igtb_stai", "../4_MachineLearning/results_ncx_feats_cross_subj_shuffle_baseline_w_igtb", "../4_MachineLearning/results_ncx_feats_cross_shufwtn_baseline_igtb")
+OUTPUTPATH <- "./results/ncx_feats_cross_subj_regressions_LR_RF_with_STAI.csv"
 dfResults <- getIndividualPredictionsDF(mainFolder, originalFeatures, OUTPUTPATH)
 

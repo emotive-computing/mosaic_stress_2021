@@ -1,16 +1,17 @@
 import os
 import sys
+import copy
 import numpy as np
 import pandas as pd
 from abc import ABC, abstractmethod
-from sklearn.preprocessing import MinMaxScaler, StandardScaler, OneHotEncoder, LabelEncoder
+from sklearn.preprocessing import MinMaxScaler, StandardScaler, OneHotEncoder, LabelEncoder, Binarizer
 from sklearn.impute import SimpleImputer
 from .stage_base import StageBase
+from ..log.logger import Logger
 
 class PreprocessingStageBase(StageBase, ABC):
     def __init__(self):
         super().__init__()
-        self.setLoggingPrefix('PreprocessingStage: ')
         self._fit_transform_data_idx = None
         self._transform_data_idx = None
         return
@@ -24,26 +25,30 @@ class PreprocessingStageBase(StageBase, ABC):
         return
 
     def _validate(self, dc):
-        try:
-            cv_splits = dc.get_item('cv_splits')
-        except:
-            if self._fit_transform_data_idx is None:
-                raise ValueError("set_fit_transform_data_idx() must be called for preprocessing stages")
+        if self._fit_transform_data_idx is not None:
             if self._transform_data_idx is None:
-                raise ValueError("set_transform_data_idx() must be called for preprocessing stages")
+                if len(self._fit_transform_data_idx) != dc.get_item('data').shape[0]:
+                    Logger.getInst().warning("set_fit_transform_data_idx() was called indexing a subset of the data, but set_transform_data_idx() has not been called.  Are you sure this is right?")
+        else:
+            try:
+                cv_splits = dc.get_item('cv_splits')
+                if len(cv_splits) != 1:
+                    raise ValueError("Too many CV folds detected.  Are you running this outside of a nested CV stage?  Make sure only one fold is available, or manually call set_fit_transform_data_idx() and set_transform_data_idx()")
+                if len(cv_splits[0]) != 2:
+                    raise ValueError("The CV fold needs to be a tuple of (train_fold_idx, test_fold_idx)")
+            except:
+                Logger.getInst().warning('set_fit_transform_data_idx() was not called. Applying this preprocessing step to the entire dataset.')
+                self._fit_transform_data_idx = range(dc.get_item('data').shape[0])
+
         return
     
     def _execute(self, dc):
-        try:
+        if self._fit_transform_data_idx is None:
             cv_splits = dc.get_item('cv_splits')
             if self._fit_transform_data_idx is None:
-                self._fit_transform_data_idx = cv_splits[0]
+                self._fit_transform_data_idx = cv_splits[0][0]
             if self._transform_data_idx is None:
-                self._transform_data_idx = cv_splits[1]
-        except:
-            self.logInfo("Preprocessing stage will be applied to entire data set.  Are you sure this is right?")
-            self._fit_transform_data_idx = list(range(dc.get_item('data').shape[0]))
-            self._transform_data_idx = None
+                self._transform_data_idx = cv_splits[0][1]
         return dc
 
 
@@ -52,7 +57,12 @@ class ImputerPreprocessingStage(PreprocessingStageBase):
 
     def __init__(self, cols, strategy, fill_value=None):
         super().__init__()
-        self._cols = cols
+        if isinstance(cols, pd.DataFrame):
+            self._cols = cols.values.flatten()
+        elif isinstance(cols, np.ndarray):
+            self._cols = cols.flatten()
+        else:
+            self._cols = cols
         self._strategy = strategy.lower()
         self._fill_value = fill_value
         return
@@ -69,7 +79,7 @@ class ImputerPreprocessingStage(PreprocessingStageBase):
     def _execute(self, dc):
         dc = super()._execute(dc)
         imputer = self._get_imputer()
-        self.logInfo("Imputing missing values for columns: {}".format(self._cols))
+        Logger.getInst().info("Imputing missing values for columns: {}".format(self._cols))
         X = dc.get_item('data')
         data_to_impute = X[self._cols]
 
@@ -78,7 +88,7 @@ class ImputerPreprocessingStage(PreprocessingStageBase):
         fit_transform_data = imputer.transform(fit_transform_data)
         X.loc[self._fit_transform_data_idx, self._cols] = fit_transform_data
 
-        if self._transform_data_idx:
+        if self._transform_data_idx is not None:
             transform_data = data_to_impute.iloc[self._transform_data_idx, :]
             transform_data = imputer.transform(transform_data)
             X.loc[self._transform_data_idx, self._cols] = transform_data
@@ -95,13 +105,18 @@ class FeatureScalerPreprocessingStage(PreprocessingStageBase):
 
     def __init__(self, cols, strategy, feature_range=(0, 1)):
         super().__init__()
-        self._cols = cols
+        if isinstance(cols, pd.DataFrame):
+            self._cols = cols.values.flatten()
+        elif isinstance(cols, np.ndarray):
+            self._cols = cols.flatten()
+        else:
+            self._cols = cols
         self._strategy = strategy.lower()
         self._feature_range = feature_range
         return
 
     def _get_scaler(self):
-        self.logInfo("Scaler strategy selected as {}".format(self._strategy))
+        Logger.getInst().info("Scaler strategy selected as {}".format(self._strategy))
         return self._scalers[self._strategy](self._feature_range)
 
     def _validate(self, dc):
@@ -113,7 +128,7 @@ class FeatureScalerPreprocessingStage(PreprocessingStageBase):
     def _execute(self, dc):
         dc = super()._execute(dc)
         scaler = self._get_scaler()
-        self.logInfo("Scaling values for columns: {}".format(self._cols))
+        Logger.getInst().info("Scaling values for columns: {}".format(self._cols))
         X = dc.get_item('data')
         data_to_scale = X[self._cols]
 
@@ -122,7 +137,7 @@ class FeatureScalerPreprocessingStage(PreprocessingStageBase):
         fit_transform_data = scaler.transform(fit_transform_data)
         X.loc[self._fit_transform_data_idx, self._cols] = fit_transform_data
 
-        if self._transform_data_idx:
+        if self._transform_data_idx is not None:
             transform_data = data_to_scale.iloc[self._transform_data_idx, :]
             transform_data = scaler.transform(transform_data)
             X.loc[self._transform_data_idx, self._cols] = transform_data
@@ -141,40 +156,82 @@ class EncoderPreprocessingStage(PreprocessingStageBase):
         def transform(self, data):
             return data
 
-    def __init__(self, cols, encoder):
+    def __init__(self, cols, encoder, encoder_args=None):
         super().__init__()
-        self._cols = cols
+        if isinstance(cols, pd.DataFrame):
+            self._cols = cols.values.flatten()
+        elif isinstance(cols, np.ndarray):
+            self._cols = cols.flatten()
+        else:
+            self._cols = cols
         self._encoder = encoder
+        self._encoder_args = encoder_args
         return
 
     def _get_encoder(self):
         if isinstance(self._encoder, str):
-            return self._encoders[self._encoder]
+            if self._encoder_args is None:
+                return self._encoders[self._encoder]()
+            else:
+                return self._encoders[self._encoder](**self._encoder_args)
         else:
             return self._encoder
 
-    # TODO - fix one-hot encoding. Needs fit_transform and fit methods, perhaps in a strategy DP class?
-    #@classmethod
-    #def _one_hot_encode(cls, df, cols):
-    #    for col in cols:
-    #        encoder = OneHotEncoder()
-    #        col_to_encode = df[[col]].astype('category').categorize()
-    #        encoded_cols = encoder.fit_transform(col_to_encode)
-    #        for c in encoded_cols:
-    #            df[c] = encoded_cols[c]
-    #        df = df.drop(col, axis=1)
-    #    return df
+    class BinarizeMedianEncoder(Encoder):
+        def __init__(self, group_by=None):
+            self._group_by = group_by
 
-    #@classmethod
-    #def _label_encode(cls, df, cols):
-    #    for col in cols:
-    #        encoder = LabelEncoder()
-    #        encoded_col = encoder.fit_transform(df[col])
-    #        df[col] = encoded_col
-    #    return df
+        def fit(self, data):
+            return self # Nothing to do
+
+        def transform(self, data):
+            if len(data.shape) == 1:
+                if self._group_by is not None:
+                    raise ValueError("group_by is set for {} but only one column of data is present for binarization".format(type(self).__name__))
+                median_val = np.median(data)
+                binarizer = Binarizer(threshold=median_val)
+                trans_data = binarizer.transform(data)
+            else:
+                if self._group_by is not None:
+                    trans_data = copy.deepcopy(data)
+                    for group_id, group_df in trans_data.groupby(by=self._group_by, axis=0, as_index=False, sort=False):
+                        for col_idx in np.where(group_df.columns != self._group_by):
+                            median_val = np.nanmedian(group_df.iloc[:,col_idx])
+                            binarizer = Binarizer(threshold=median_val, copy=False)
+                            bin_trans_data = binarizer.transform(group_df.iloc[:,col_idx])
+                            trans_data.loc[group_df.index, trans_data.columns != self._group_by] = bin_trans_data
+                else:
+                    trans_data = copy.deepcopy(data)
+                    for col_idx in range(trans_data.shape[1]):
+                        median_val = np.nanmedian(trans_data.iloc[:,col_idx])
+                        binarizer = Binarizer(threshold=median_val, copy=False)
+                        bin_trans_data = binarizer.transform(trans_data.iloc[:,col_idx])
+                        trans_data.iloc[:,col_idx] = bin_trans_data
+
+            for col in trans_data.columns:
+                if col != self._group_by:
+                    trans_data[col] = trans_data[col].astype(int)
+            return trans_data
+        
+
+    class OneHotEncoder(Encoder):
+        def fit(self, data):
+            return self
+
+        def transform(self, data):
+            encoded_dfs = []
+            for col_idx in range(data.shape[1]):
+                encoder = OneHotEncoder()
+                col_to_encode = data.iloc[:,[col_idx]].astype('category')
+                encoded_cols = encoder.fit_transform(col_to_encode)
+                encoded_df = pd.DataFrame(data=encoded_cols.toarray(), columns=encoder.get_feature_names_out())
+                encoded_dfs.append(encoded_df)
+
+            encoded_data = pd.concat(encoded_dfs, axis=1)
+            return encoded_data
 
     def _validate(self, dc):
-        #super()._validate(dc)
+        super()._validate(dc)
         if isinstance(self._encoder, str) and self._encoder not in self._encoders.keys():
             raise ValueError("Unknown encoder string passed to {}; must be one of {}".format(type(self).__name__, self._encoders.keys()))
         # if not isinstance(self._encoder, type(self).Encoder):
@@ -184,9 +241,9 @@ class EncoderPreprocessingStage(PreprocessingStageBase):
     def _execute(self, dc):
         dc = super()._execute(dc)
         encoder = self._get_encoder()
-        self.logInfo("Encoding labels for columns: {}".format(self._cols))
         X = dc.get_item('data')
         data_to_encode = X[self._cols]
+        Logger.getInst().info("Encoding labels for columns: {}".format(self._cols))
 
         fit_transform_data = data_to_encode.iloc[self._fit_transform_data_idx, :]
         encoder = encoder.fit(fit_transform_data)
@@ -211,7 +268,7 @@ class EncoderPreprocessingStage(PreprocessingStageBase):
         return dc
 
 EncoderPreprocessingStage._encoders = {
-    #'onehotencoder': EncoderPreprocessingStage._one_hot_encode,
-    #'labelencoder': EncoderPreprocessingStage._label_encode
-    'labelencoder': LabelEncoder()
+    'label_encoder': LabelEncoder,
+    'one_hot': EncoderPreprocessingStage.OneHotEncoder,
+    'binarize_median': EncoderPreprocessingStage.BinarizeMedianEncoder
 }

@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import itertools
 from tqdm import tqdm
+from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping
 from sklearn.model_selection import KFold, GroupKFold, StratifiedKFold
 from sklearn.preprocessing import LabelEncoder
@@ -12,12 +13,12 @@ from sklearn.utils import shuffle
 from .stage_base import StageBase
 from .pipeline import Pipeline
 from ..models.model import ModelBase, PyTorchModel, SklearnModel, TensorFlowModel
-from .load_data import ObjectDataLoaderStage
+from .load_data import DataFrameLoaderStage
 from .preprocessing import PreprocessingStageBase
 from .training_stage import ModelTrainingStage, SupervisedTrainingContext
 from .evaluation_stage import EvaluationStage, SupervisedEvaluationContext
-from .prediction_stage import ModelPredictionStage
-from ..utils.utils import get_sklearn_scoring_func, get_tensorflow_loss_func, get_any_scoring_func
+from .prediction_stage import ModelPredictionStage, PredictionContext
+from ..utils.utils import get_sklearn_scoring_func, get_tensorflow_loss_func, get_torch_loss_func, get_any_scoring_func
 from ..log.logger import Logger
 
 class GenerateCVFoldsStage(StageBase):
@@ -68,10 +69,10 @@ class GenerateCVFoldsStage(StageBase):
             skf = StratifiedKFold(n_splits=args['num_folds'])
 
         if 'percentile_bins' in args.keys():
-            y = pd.qcut(data['stratify_on'].argsort(kind='stable'), q=args['percentile_bins'], labels=range(split)).tolist()
+            y = pd.qcut(data[args['stratify_on']].argsort(kind='stable'), q=args['percentile_bins'], labels=range(split)).tolist()
         else:
-            y = np.digitize(y, bins=args['bin_edges'])
-        return skf.split(data, y)
+            y = np.digitize(data[args['stratify_on']], bins=args['bin_edges'])
+        return list(skf.split(data, y))
 
     @classmethod
     def _stratified_grouped_kfold(cls, data, args):
@@ -123,19 +124,27 @@ class GenerateCVFoldsStage(StageBase):
             test_idxs = folds_df['Fold'+str(fold_idx)+'_test'].dropna().astype(int).values
             splits.append((train_idxs, test_idxs))
         return splits
+
+    @classmethod
+    def _manual_train_test(cls, data, args):
+        if 'train_idx' not in args.keys():
+            raise ValueError("{} with 'manual_train_test' strategy must provide a 'train_idx' strategy arg".format(type(cls).__name__))
+        if 'test_idx' not in args.keys():
+            raise ValueError("{} with 'manual_train_test' strategy must provide a 'test_idx' strategy arg".format(type(cls).__name__))
+        return [(list(args['train_idx']), list(args['test_idx']))]
         
 
     def _validate(self, dc):
         if self._strategy not in self._strategies.keys():
-            raise ValueError("Unknown strategy passed to {}; must be one of {}".format(GenerateCVFoldsStage.__name__, GenerateCVFoldsStage._strategies))
+            raise ValueError("Unknown strategy passed to {}; must be one of {}".format(type(self).__name__, list(self._strategies.keys())))
         # Other validation handled by each strategy implementation.
         # TODO - use strategy design pattern to encapsuate validation and execution of each strategy
         return
 
     def _execute(self, dc):
-        self.logInfo("CV fold strategy selected as {}".format(self._strategy))
+        Logger.getInst().info("CV fold strategy selected as {}".format(self._strategy))
         strategy = self._strategies[self._strategy]
-        self.logInfo("Generating CV Folds")
+        Logger.getInst().info("Generating CV Folds")
         X = dc.get_item('data')
         splits = strategy(X, self._strategy_args)
         dc.set_item('cv_splits', splits)
@@ -146,7 +155,8 @@ GenerateCVFoldsStage._strategies = {
     "random_grouped": GenerateCVFoldsStage._random_grouped_kfold,
     "stratified": GenerateCVFoldsStage._stratified_kfold,
     "stratified_grouped": GenerateCVFoldsStage._stratified_grouped_kfold,
-    "load_premade": GenerateCVFoldsStage._load_premade_folds
+    "load_premade": GenerateCVFoldsStage._load_premade_folds,
+    "manual_train_test": GenerateCVFoldsStage._manual_train_test
 }
 
 
@@ -158,83 +168,56 @@ GenerateCVFoldsStage._strategies = {
 class CrossValidationStage(StageBase):
     def __init__(self):
         super().__init__()
-        self._preprocessing_stages = []
         self._cv_context = None
-        self._evaluation_context = None
-        self.setLoggingPrefix('CrossValidationStage: ')
 
-    def addPreprocessingStage(self, stage):
-        self._preprocessing_stages.append(stage)
 
     def setCVContext(self, cv_context):
-        self._cv_context = copy.deepcopy(cv_context)
-
-    def setEvaluationContext(self, eval_context):
-        self._evaluation_context = eval_context
+        self._cv_context = cv_context
 
     def _validate(self, dc):
-        for stage in self._preprocessing_stages:
-            if not isinstance(stage, PreprocessingStageBase):
-                raise ValueError("addPreprocessingStage only accepts instances of PreprocessingStageBase")
         if "data" not in dc.get_keys():
             raise ValueError("{} needs a dataframe object named 'data' to be present in the data container".format(type(self).__name__))
         if not isinstance(self._cv_context, SupervisedCVContext):
             raise ValueError("setCVContext only accepts instances of SupervisedCVContext")
-        if not isinstance(self._evaluation_context, SupervisedEvaluationContext):
-            raise ValueError("setEvaluationContext only accepts instances of SupervisedEvaluationContext")
-        # TODO - check that param grid has a single param per key?
         self._cv_context.validate()
-        self._evaluation_context.validate()
         return
 
     def _execute(self, dc):
-        self.logInfo("Starting cross-validation stage")
-
-        #cols = [x for x in self._cv_context.feature_cols]
-        #if isinstance(self._cv_context.y_label, Iterable):
-        #    cols = cols + [x for x in self._cv_context.y_label]
-        #else:
-        #    cols.append(self._cv_context.y_label)
+        Logger.getInst().info("Starting cross-validation stage")
 
         cv_splits = dc.get_item("cv_splits")
-
-        # unpack cv_context. Should be one item per key
-        # QUESTION: How does this work? Setting the param_grid to one value  
-        # param_grid = self._cv_context.get_param_grid()
-        # for d in param_grid.values():
-        #     for k in d.keys():
-        #         if not isinstance(d[k], str) and isinstance(d[k], Iterable):
-        #             item = next(d[k], None)
-        #             d[k] = item
-        # self._cv_context.set_param_grid(param_grid)
 
         cv_results = {}
         data = dc.get_item('data')
         #data = data[cols]  # feature and label cols
         for i in range(len(cv_splits)):
-            self.logInfo("Running CV for fold {}".format(i))
+            Logger.getInst().info("Running CV for fold {}".format(i))
             train_idx, test_idx = cv_splits[i]
 
             p = Pipeline()
-            load_stage = ObjectDataLoaderStage()
-            load_stage.setDataObject(data, reset_index=True)
+            load_stage = DataFrameLoaderStage()
+            load_stage.setDataFrame(data, reset_index=True)
             p.addStage(load_stage)
 
-            for stage in self._preprocessing_stages:
-                stage.set_fit_transform_data_idx(train_idx)
-                stage.set_transform_data_idx(test_idx)
-                p.addStage(stage)
+            for stage in self._cv_context.get_preprocessing_stages():
+                pre_stage = copy.deepcopy(stage)
+                pre_stage.set_fit_transform_data_idx(train_idx)
+                pre_stage.set_transform_data_idx(test_idx)
+                p.addStage(pre_stage)
 
+            Logger.getInst().info("Training for fold {}".format(i))
             training_stage = ModelTrainingStage(train_idx)
-            training_stage.setTrainingContext(self._cv_context)
+            training_stage.setTrainingContext(self._cv_context.training_context)
             p.addStage(training_stage)
 
             prediction_stage = ModelPredictionStage(test_idx)
-            prediction_stage.setPredictionContext(self._cv_context)
+            prediction_context = PredictionContext()
+            prediction_context.feature_cols = self._cv_context.training_context.feature_cols
+            prediction_stage.setPredictionContext(prediction_context)
             p.addStage(prediction_stage)
 
             eval_stage = EvaluationStage(test_idx)
-            eval_stage.setEvaluationContext(self._evaluation_context)
+            eval_stage.setEvaluationContext(self._cv_context.eval_context)
             p.addStage(eval_stage)
 
             p.run()
@@ -247,139 +230,99 @@ class CrossValidationStage(StageBase):
 class NestedCrossValidationStage(StageBase):
     def __init__(self):
         super().__init__()
-        self._preprocessing_stages = []
         self._nested_cv_context = None
-        self._cv_folds_stage = None
-        self._evaluation_context = None
-        self.setLoggingPrefix('NestedCrossValidationStage: ')
 
-    def addPreprocessingStage(self, stage):
-        self._preprocessing_stages.append(stage)
-
-    def setCVFoldsStage(self, stage):
-        self._cv_folds_stage = stage
-
-    def setCVContext(self, nested_cv_context):
+    def set_nested_cv_context(self, nested_cv_context):
         self._nested_cv_context = copy.deepcopy(nested_cv_context)
 
-    def setEvaluationContext(self, eval_context):
-        self._evaluation_context = eval_context 
-
-    # def _createIterableParameterGrid(self, param_grid):
-    #     params_flat = {k:v for d in param_grid.values() for k,v in d.items()}
-    #     param_vals = list(itertools.product(*[v for v in params_flat.values()]))
-    #     param_keys = [k for k in params_flat.keys()]
-    #     param_grid_list = [dict(zip(param_keys, param_vals[i])) for i in range(len(param_vals))]
-    #     # Remake each parameter dictionary into the correct structure
-    #     res = []
-    #     for param_dict in param_grid_list:
-    #         new_param_dict = {}
-    #         for param_type, d in param_grid.items():
-    #             new_param_dict[param_type] = {k:v for k,v in param_dict.items() if k in d}
-    #         res.append(new_param_dict)
-    #     return res
-
     def _validate(self, dc):
-        for stage in self._preprocessing_stages:
-            if not isinstance(stage, PreprocessingStageBase):
-                raise ValueError("addPreprocessingStage only accepts instances of PreprocessingStageBase")
         if "data" not in dc.get_keys():
             raise ValueError("{} needs a dataframe object named 'data' to be present in the data container".format(type(self).__name__))
         if "cv_splits" not in dc.get_keys():
             raise ValueError("{} needs a set of cross-validation folds named 'cv_splits' to be present in the data container".format(type(self).__name__))
-        if not isinstance(self._cv_folds_stage, GenerateCVFoldsStage):
-            raise ValueError("setCVFoldsStage requires an instance of GenerateCVFoldsStage")
         if not isinstance(self._nested_cv_context, NestedSupervisedCVContext):
-            raise ValueError("setCVContext requires an instance of SupervisedCVContext")
-        if not isinstance(self._evaluation_context, SupervisedEvaluationContext):
-            raise ValueError("setEvaluationContext requires an instance of SupervisedEvaluationContext")
+            raise ValueError("set_nested_cv_context() requires an instance of NestedSupervisedCVContext")
         self._nested_cv_context.validate()
-        self._evaluation_context.validate()
         return
 
     def _execute(self, dc):
-        self.logInfo("Starting nested cross-validation stage")
-
-        #cols = [x for x in self._nested_cv_context.feature_cols]
-        #if isinstance(self._nested_cv_context.y_label, Iterable):
-        #    cols = cols + [x for x in self._nested_cv_context.y_label]
-        #else:
-        #    cols.append(self._nested_cv_context.y_label)
+        Logger.getInst().info("Starting nested cross-validation stage")
 
         cv_splits = dc.get_item("cv_splits")
 
-        # unpack cv_context
-        param_grid = self._nested_cv_context.create_iterable_param_grid()
-        param_eval_goal = self._nested_cv_context.param_eval_goal
-        param_eval_func = self._nested_cv_context.param_eval_func
-
         nested_cv_results = {}
         data = dc.get_item('data')
-        #data = data[cols] # x and y cols
+        param_eval_func_name = self._nested_cv_context.tuning_context.get_param_eval_func_name()
         for i in tqdm(range(len(cv_splits))):
-            self.logInfo("Running nested CV for fold {}".format(i))
+            Logger.getInst().info("Running nested CV for fold {}".format(i))
             train_idx, test_idx = cv_splits[i]
             data_train = data.iloc[train_idx, :]
 
-            param_grid_eval_results = []
-            for point in param_grid:
+            params_eval_results = []
+            params = self._nested_cv_context.tuning_context.get_next_params()
+            while params is not None:
                 p = Pipeline()
-                load_stage = ObjectDataLoaderStage()
-                load_stage.setDataObject(data_train, reset_index=True)
+                load_stage = DataFrameLoaderStage()
+                load_stage.setDataFrame(data_train, reset_index=True)
                 p.addStage(load_stage)
 
-                p.addStage(self._cv_folds_stage)
+                p.addStage(self._nested_cv_context.cv_folds_stage)
 
                 cv_stage = CrossValidationStage()
-                cv_context = self._nested_cv_context.create_cv_context(point)
+                cv_context = SupervisedCVContext()
+                cv_context.training_context = copy.copy(self._nested_cv_context.training_context)
+                cv_context.training_context.model.set_params(params) # BB - do we need to deepcopy the model?
+                cv_context.eval_context = copy.copy(self._nested_cv_context.eval_context)
+                cv_context.eval_context.eval_funcs = self._nested_cv_context.tuning_context.param_eval_func
+                for stage in self._nested_cv_context.get_preprocessing_stages():
+                    cv_context.add_preprocessing_stage(stage)
                 cv_stage.setCVContext(cv_context)
-                for stage in self._preprocessing_stages:
-                    cv_stage.addPreprocessingStage(stage)
-
-                eval_context = SupervisedEvaluationContext()
-                eval_context.y_label = self._evaluation_context.y_label
-                eval_context.eval_funcs = param_eval_func
-                param_eval_func_name = eval_context.get_eval_func_names()[0]
-                cv_stage.setEvaluationContext(eval_context)
                 p.addStage(cv_stage)
 
                 p.run()
                 cv_results = p.getDC().get_item('cv_results')
                 eval_values = [cv_results[fold].get_item('evaluation_results')[param_eval_func_name] for fold in cv_results.keys()]
-                param_grid_eval_results.append((point, np.mean(eval_values)))
+                params_eval_results.append((params, np.mean(eval_values)))
 
-            param_grid_eval_results.sort(key=lambda x: np.mean(x[1]), reverse=(param_eval_goal == 'max'))
-            best_param_point = param_grid_eval_results[0][0]
+                params = self._nested_cv_context.tuning_context.get_next_params()
+            self._nested_cv_context.tuning_context.reset_next_params()
 
-            # Retrain using the best param point
+            params_eval_results.sort(key=lambda x: np.mean(x[1]), reverse=(self._nested_cv_context.tuning_context.param_eval_goal == 'max'))
+            best_params = params_eval_results[0][0]
+
+            # Retrain using the best params
             p = Pipeline()
-            load_stage = ObjectDataLoaderStage()
-            load_stage.setDataObject(data, reset_index=True)
+            load_stage = DataFrameLoaderStage()
+            load_stage.setDataFrame(data, reset_index=True)
             p.addStage(load_stage)
 
-            for stage in self._preprocessing_stages:
-                stage.set_fit_transform_data_idx(train_idx)
-                stage.set_transform_data_idx(test_idx)
-                p.addStage(stage)
+            for stage in self._nested_cv_context.get_preprocessing_stages():
+                pre_stage = copy.deepcopy(stage)
+                pre_stage.set_fit_transform_data_idx(train_idx)
+                pre_stage.set_transform_data_idx(test_idx)
+                p.addStage(pre_stage)
 
             training_stage = ModelTrainingStage(train_idx)
-            cv_context = self._nested_cv_context.create_cv_context(best_param_point)
-            training_stage.setTrainingContext(cv_context)
+            training_context = copy.copy(self._nested_cv_context.training_context)
+            training_context.model.set_params(best_params)
+            training_stage.setTrainingContext(training_context)
             p.addStage(training_stage)
 
             prediction_stage = ModelPredictionStage(test_idx)
-            prediction_stage.setPredictionContext(cv_context)
+            pred_context = PredictionContext()
+            pred_context.feature_cols = training_context.feature_cols
+            prediction_stage.setPredictionContext(pred_context)
             p.addStage(prediction_stage)
 
             eval_stage = EvaluationStage(test_idx)
-            eval_stage.setEvaluationContext(self._evaluation_context)
+            eval_stage.setEvaluationContext(self._nested_cv_context.eval_context)
             p.addStage(eval_stage)
 
             p.run()
 
             # Save results and the best parameter
             nested_cv_dc = p.getDC()
-            nested_cv_dc.set_item('best_param', best_param_point)
+            nested_cv_dc.set_item('best_param', best_params)
             nested_cv_results['fold'+str(i)] = nested_cv_dc
 
         dc.set_item('nested_cv_results', nested_cv_results)
@@ -388,108 +331,89 @@ class NestedCrossValidationStage(StageBase):
 
 
 ##################################################################
-class SupervisedCVContext(SupervisedTrainingContext):
+class ParamSearch(ABC):
+    def __init__(self, params):
+        self.set_params(params)
+
+    def get_params(self):
+        return self._params
+
+    def set_params(self, params):
+        self._params = params
+
+    @abstractmethod
+    def validate(self):
+        if not isinstance(params, dict):
+            raise ValueError("{} requires a dictionary of parameters (keys) and values".format(type(self).__name__))
+
+    @abstractmethod
+    def reset_next_params(self):
+        return
+
+    # BB - prev_param_eval is intended for parameter searches which use previous values
+    #      to decide which parameters come next
+    @abstractmethod
+    def get_next_params(self, prev_param_eval=None):
+        return   
+
+    params = property(get_params, set_params)
+
+class GridParamSearch(ParamSearch):
+    def set_params(self, params):
+        super().set_params(params)
+        param_vals = list(itertools.product(*[val for val in self._params.values()]))
+        param_keys = list(self._params.keys())
+        self._param_grid = [dict(zip(param_keys, param_vals[i])) for i in range(len(param_vals))]
+        self._grid_idx = 0
+
+    def validate():
+        super().validate()
+
+    def reset_next_params(self):
+        self._grid_idx = 0
+
+    def get_next_params(self, prev_param_eval=None):
+        if self._grid_idx < len(self._param_grid):
+            next_params = self._param_grid[self._grid_idx]
+            self._grid_idx += 1
+        else:
+            next_params = None
+        return next_params
+
+class ModelTuningContext(ABC):
     def __init__(self):
-        super().__init__()
-        self._param_eval_func = None # TODO - this should live on the nested CV context
+        self._model_param_search = None
+        self._param_eval_func = None
         self._param_eval_goal = None
-        # self._param_grid = None
-        
-    # Might be best to just set these on the model when this is called. I don't see any reason otherwise
-    # def get_params(self):
-    #     return super().get_params()
 
-    # def set_params(self, params):
-    #     super().set_params(params)
-    #     return        
+    def get_model_param_search(self):
+        return self._model_param_search
 
-    def get_param_eval_func_name(self):
-        return self._param_eval_func.__name__
+    def set_model_param_search(self, model_param_search):
+        self._model_param_search = model_param_search
 
     def get_param_eval_func(self):
         return self._param_eval_func
 
+    def get_param_eval_func_name(self):
+        if hasattr(self._param_eval_func, '__name__'):
+            return self._param_eval_func.__name__
+        else:
+            return type(self._param_eval_func).__name__
+
     def set_param_eval_func(self, param_eval_func):
         self._param_eval_func = param_eval_func
-        return
 
     def get_param_eval_goal(self):
         return self._param_eval_goal
 
     def set_param_eval_goal(self, param_eval_goal):
         self._param_eval_goal = param_eval_goal.lower()
-        return
 
+    @abstractmethod
     def validate(self):
-        super().validate()
-        # if self.param_eval_func is None:
-        #     raise RuntimeError('param_eval_func must be set before execution')
-        # if not callable(self.param_eval_func):
-        #     raise ValueError('param_eval_func must be initialized to a callable type')
-        # if self.param_eval_goal is None:
-        #     raise RuntimeError('param_eval_goal must be initialized to min or max')
-        # if self.param_eval_goal not in ['min', 'max']:  # TODO: make enum object with min/max types
-        #     raise ValueError('param_eval_goal must be either "min" or "max"')
-        return
-
-    # param_grid = property(get_param_grid, set_param_grid)
-    param_eval_func = property(get_param_eval_func, set_param_eval_func)
-    param_eval_goal = property(get_param_eval_goal, set_param_eval_goal)
-
-class NestedSupervisedCVContext(SupervisedCVContext):
-    def __init__(self):
-        super().__init__()
-        self._param_grid = None # BB TODO - can we always use this as the model params and name it as such? Reuse this in the subclasses instead of adding new model_params!
-
-    # TODO: These should be used by the user and implemented by backend specific classes
-    # def get_params(self):
-    #     return super().get_params()
-
-    # def set_params(self, params):
-    #     # Convert any non iterables to lists
-    #     for d in params.values():
-    #         for k,v in d.items():
-    #             if not isinstance(v,list):
-    #                 d[k] = [v]
-    #     super().set_params(params)
-    #     return
-
-    # I don't think this is the correct way to do this        
-    def create_cv_context(self, params):
-        cv_context = SupervisedCVContext()
-        # I'm not sure if you should be able to set a model property on nested cv context
-        model = copy.deepcopy(self.model)
-        model.set_params(params)
-        cv_context.model = model
-        cv_context.feature_cols = self.feature_cols
-        cv_context.y_label = self.y_label
-        cv_context.param_eval_func = self.param_eval_func
-        cv_context.param_eval_goal = self.param_eval_goal
-        return cv_context
-        
-    def get_param_grid(self):
-        return self._param_grid
-
-    def set_param_grid(self, param_grid):
-        self._param_grid = param_grid
-
-    def create_iterable_param_grid(self):
-        param_grid = self.get_param_grid()
-        params_flat = {k:v for d in param_grid.values() for k,v in d.items()}
-        param_vals = list(itertools.product(*[v for v in params_flat.values()]))
-        param_keys = [k for k in params_flat.keys()]
-        param_grid_list = [dict(zip(param_keys, param_vals[i])) for i in range(len(param_vals))]
-        # Remake each parameter dictionary into the correct structure
-        res = []
-        for param_dict in param_grid_list:
-            new_param_dict = {}
-            for param_type, d in param_grid.items():
-                new_param_dict[param_type] = {k:v for k,v in param_dict.items() if k in d}
-            res.append(new_param_dict)
-        return res
-
-    def validate(self):
-        super().validate()
+        if not isinstance(self._model_param_search, ParamSearch):
+            raise ValueError('model_param_search much be set to a subclass of ParamSearch')
         if self.param_eval_func is None:
             raise RuntimeError('param_eval_func must be set before execution')
         if not callable(self.param_eval_func):
@@ -498,242 +422,350 @@ class NestedSupervisedCVContext(SupervisedCVContext):
             raise RuntimeError('param_eval_goal must be initialized to min or max')
         if self.param_eval_goal not in ['min', 'max']:  # TODO: make enum object with min/max types
             raise ValueError('param_eval_goal must be either "min" or "max"')
-        return
 
-    param_grid = property(get_param_grid, set_param_grid)
+    def reset_next_params(self):
+        self._model_param_search.reset_next_params()
 
-
-class SklearnNestedSupervisedCVContext(NestedSupervisedCVContext):
-    def __init__(self):
-        super().__init__()
-        self._model_params = None
-
-    def get_param_grid(self):
-        param_grid = {}
-        model_key, model_dict = self.get_model_params()
-        if model_dict:
-            param_grid[model_key] = model_dict
-        return param_grid      
-
-    def get_model_params(self, key="model"):
-        if key:
-            return key, self._model_params
+    def get_next_params(self, prev_param_eval=None):
+        next_params = self._model_param_search.get_next_params(prev_param_eval)
+        if next_params is not None:
+            return {'model': self._model_param_search.get_next_params(prev_param_eval)}
         else:
-            return self._model_params
+            return None
 
-    def set_model_params(self, params):
-        self._model_params = params
+    model_param_search = property(get_model_param_search, set_model_param_search)
+    param_eval_func = property(get_param_eval_func, set_param_eval_func)
+    param_eval_goal = property(get_param_eval_goal, set_param_eval_goal)
 
-    def get_params(self):
-        return self.param_grid
-
-    def set_params(self, param_dict):
-        self.param_grid = param_dict
-        return
-
+class SklearnModelTuningContext(ModelTuningContext):
     def get_param_eval_func(self):
         return self._param_eval_func
 
     def set_param_eval_func(self, param_eval_func):
         if isinstance(param_eval_func, str):
-            self.param_eval_func = get_sklearn_scoring_func(param_eval_func)
+            super().set_param_eval_func(get_sklearn_scoring_func(param_eval_func))
         else:
             super().set_param_eval_func(param_eval_func)
 
     def validate(self):
         super().validate()
-        if not isinstance(self.model, SklearnModel):
-            raise TypeError("{} must take SklearnModel type as model arg".format(type(self).__name__))
-        return True
 
     param_eval_func = property(get_param_eval_func, set_param_eval_func)
-    model_params = property(get_model_params, set_model_params)
 
-
-class TensorFlowNestedSupervisedCVContext(NestedSupervisedCVContext):
-    tf_optimizers = [
-        'adadelta',
-        'adagrad',
-        'adam',
-        'adamax',
-        'nadam',
-        'rmsprop',
-        'sgd',
-        'ftrl',
-        'lossscaleoptimizer',
-        'lossscaleoptimizerv1'
-    ]
-
+class TensorFlowModelTuningContext(ModelTuningContext):
     def __init__(self):
         super().__init__()
-        self._model_params = None
-        self._fit_params = None
-        self._predict_params = None
-        self._compile_params = None
+        self._fit_param_search = None
+        self._predict_param_search = None
+        self._compile_param_search = None
+        self._current_params = None
 
     def get_param_eval_func(self):
         return self._param_eval_func
-
+    
     def set_param_eval_func(self, param_eval_func):
         if isinstance(param_eval_func, str):
-            self.param_eval_func = get_tensorflow_loss_func(param_eval_func) # TODO - support metric functions?
+            super().set_param_eval_func(get_tensorflow_loss_func(param_eval_func)) # TODO - support scoring functions
         else:
             super().set_param_eval_func(param_eval_func)
-        return
 
-    def get_model_params(self, key="model"):
-        if key:
-            return key, self._model_params
+    def get_fit_param_search(self):
+        return self._fit_param_search
+
+    def set_fit_param_search(self, fit_param_search):
+        self._fit_param_search = fit_param_search
+
+    def get_predict_param_search(self):
+        return self._predict_param_search
+
+    def set_predict_param_search(self, predict_param_search):
+        self._predict_param_search = predict_param_search
+
+    def get_compile_param_search(self):
+        return self._compile_param_search
+
+    def set_compile_param_search(self, compile_param_search):
+        self._compile_param_search = compile_param_search
+
+    def reset_next_params(self):
+        self._model_param_search.reset_next_params()
+        self._fit_param_search.reset_next_params()
+        self._predict_param_search.reset_next_params()
+        self._compile_param_search.reset_next_params()
+
+    def get_next_params(self, prev_param_eval=None):
+        if self._current_params is None:
+            self._current_params = {}
+            if self._model_param_search is not None:
+                self._current_params['model'] = self._model_param_search.get_next_params(prev_param_eval)
+            if self._fit_param_search is not None:
+                self._current_params['fit'] = self._fit_param_search.get_next_params(prev_param_eval)
+            if self._predict_param_search is not None:
+                self._current_params['predict'] = self._predict_param_search.get_next_params(prev_param_eval)
+            if self._compile_param_search is not None:
+                self._current_params['compile'] = self._compile_param_search.get_next_params(prev_param_eval)
         else:
-            return self._model_params
-    
-    def set_model_params(self, model_params):
-        self._model_params = model_params
+            # Cycle 'model' params first
+            need_next_model_params = False
+            if self._model_param_search is not None:
+                next_model_params = self._model_param_search.get_next_params(prev_param_eval)
+                need_next_model_params = True
+            else:
+                next_model_params = None
 
-    def get_fit_params(self, key="fit"):
-        if key:
-            return key, self._fit_params
-        else:
-            return self._fit_params
-            
-    def set_fit_params(self, fit_params):
-        self._fit_params = fit_params
+            if next_model_params is None:
+                if need_next_model_params:
+                    self._model_param_search.reset_next_params()
+                    self._current_params['model'] = self._model_param_search.get_next_params(prev_param_eval)
 
-    def get_predict_params(self, key="predict"):
-        if key:
-            return key, self._predict_params
-        else:
-            return self._predict_params
-    
-    def set_predict_params(self, predict_params):
-        self._predict_params = predict_params
-    
-    def get_compile_params(self, key="compile"):
-        if key:
-            return key, self._compile_params
-        else:
-            return self._compile_params
+                # Cycle 'fit' params second
+                need_next_fit_params = False
+                if self._fit_param_search is not None:
+                    next_fit_params = self._fit_param_search.get_next_params(prev_param_eval)
+                    need_next_fit_params = True
+                else:
+                    next_fit_params = None
 
-    def set_compile_params(self, compile_params):
-        self._compile_params = compile_params
+                if next_fit_params is None:
+                    if need_next_fit_params:
+                        self._fit_param_search.reset_next_params()
+                        self._current_params['fit'] = self._model_fit_search.get_next_params(prev_param_eval)
 
-    def get_param_grid(self):
-        param_grid = {}
-        model_key, model_dict = self.get_model_params()
-        if model_dict:
-            param_grid[model_key] = model_dict
-        fit_key, fit_dict = self.get_fit_params()
-        if fit_dict:
-            param_grid[fit_key] = fit_dict
-        predict_key, predict_dict = self.get_predict_params()
-        if predict_dict:
-            param_grid[predict_key] = predict_dict
-        compile_key, compile_dict = self.get_compile_params()
-        if compile_dict:
-            param_grid[compile_key] = compile_dict
-        return param_grid
-    # def get_optimizer(self):
-    #     return self._optimizer
+                    # Cycle 'predict' params third
+                    need_next_predict_params = False
+                    if self._predict_param_search is not None:
+                        next_predict_params = self._predict_param_search.get_next_params(prev_param_eval)
+                        need_next_predict_params = True
+                    else:
+                        next_predict_params = None
 
-    # def set_optimizer(self, optimizer):
-    #     self._optimizer = optimizer.lower()
-    #     return
+                    if next_predict_params is None:
+                        if need_next_predict_params:
+                            self._predict_param_search.reset_next_params()
+                            self._current_params['predict'] = self._model_predict_search.get_next_params(prev_param_eval)
+                            
+                        # Cycle 'compile' params fourth
+                        if self._compile_param_search is not None:
+                            next_compile_params = self._compile_param_search.get_next_params(prev_param_eval)
+                            if next_compile_params is not None:
+                                self._current_params['compile'] = next_compile_params
+                            else:
+                                self._current_params = None
+                        else:
+                            self._current_params = None
+                    else:
+                        self._current_params['predict'] = next_predict_params
+                else:
+                    self._current_params['fit'] = next_fit_params
+            else:
+                self._current_params['model'] = next_model_params
 
-    # def validate(self):
-    #     super().validate()
-    #     if not isinstance(self.model, TensorFlowModel):
-    #         raise TypeError("{} must take TensorFlowModel type as model arg".format(type(self).__name__))
-    #     if not isinstance(self.optimizer, str):
-    #         raise TypeError("{} optimizer must be string type arg".format(type(self).__name__))
-    #     if not self._optimizer in self.tf_optimizers:
-    #         raise ValueError("optimizer '{}' not recognized and may not be supported by TensorFlow".format(self._optimizer))
-    #     return
-
-    param_eval_func = property(get_param_eval_func, set_param_eval_func)
-    model_params = property(get_model_params, set_model_params)
-    predict_params = property(get_predict_params, set_predict_params)
-    fit_params = property(get_fit_params, set_fit_params)
-    compile_params = property(get_compile_params, set_compile_params)
-    #optimizer = property(get_optimizer, set_optimizer)
-
-class PyTorchNestedSupervisedCVContext(NestedSupervisedCVContext):
-    def __init__(self):
-        super().__init__()
-        self._model_params = None
-        self._optimizer_params = None
-        self._criterion_params = None
-        self._fit_params = None
-
-    def get_param_grid(self):
-        param_grid = {}
-        model_key, model_dict = self.get_model_params()
-        if model_dict:
-            param_grid[model_key] = model_dict
-        fit_key, fit_dict = self.get_fit_params()
-        if fit_dict:
-            param_grid[fit_key] = fit_dict
-        optimizer_key, optimizer_dict = self.get_optimizer_params()
-        if optimizer_dict:
-            param_grid[optimizer_key] = optimizer_dict
-        criterion_key, criterion_dict = self.get_criterion_params()
-        if criterion_dict:
-            param_grid[criterion_key] = criterion_dict
-        return param_grid
-    
-    def get_model_params(self, key="model"):
-        if key:
-            return key, self._model_params
-        else:
-            return self._model_params
-    
-    def set_model_params(self, model_params):
-        self._model_params = model_params
-
-    def get_fit_params(self, key="fit"):
-        if key:
-            return key, self._fit_params
-        else:
-            return self._fit_params
-            
-    def set_fit_params(self, fit_params):
-        self._fit_params = fit_params
-
-    def get_optimizer_params(self, key="optimizer"):
-        if key:
-            return key, self._optimizer_params
-        else:
-            return self._optimizer_params
-    
-    def set_optimizer_params(self, optimizer_params):
-        self._optimizer_params = optimizer_params
-
-    def get_criterion_params(self, key="criterion"):
-        if key:
-            return key, self._criterion_params
-        else:
-            return self._criterion_params
-
-    def set_criterion_params(self, criterion_params):
-        self._criterion_params = criterion_params
-
-    def get_param_eval_func(self):
-        return self._param_eval_func
-
-    def set_param_eval_func(self, param_eval_func):
-        if isinstance(param_eval_func, str):
-            self.param_eval_func = get_sklearn_scoring_func(param_eval_func)
-        else:
-            super().set_param_eval_func(param_eval_func)
+        return self._current_params
 
     def validate(self):
         super().validate()
-        if not isinstance(self.model, PyTorchModel):
-            raise TypeError("{} must take PyTorchModel type as model arg".format(type(self).__name__))
-        return True
+        if self._fit_param_search is not None and not isinstance(self._fit_param_search, ParamSearch):
+            raise ValueError('fit_param_search much be set to a subclass of ParamSearch')
+        if self._predict_param_search is not None and not isinstance(self._predict_param_search, ParamSearch):
+            raise ValueError('predict_param_search much be set to a subclass of ParamSearch')
+        if self._compile_param_search is not None and not isinstance(self._compile_param_search, ParamSearch):
+            raise ValueError('compile_param_search much be set to a subclass of ParamSearch')
 
     param_eval_func = property(get_param_eval_func, set_param_eval_func)
-    model_params = property(get_model_params, set_model_params)
-    fit_params = property(get_fit_params, set_fit_params)
-    optimizer_params = property(get_optimizer_params, set_optimizer_params)
-    criterion_params = property(get_criterion_params, set_criterion_params)
+    fit_param_search = property(get_fit_param_search, set_fit_param_search)
+    predict_param_search = property(get_predict_param_search, set_predict_param_search)
+    compile_param_search = property(get_compile_param_search, set_compile_param_search)
 
+
+
+class PyTorchModelTuningContext(ModelTuningContext):
+    def __init__(self):
+        super().__init__()
+        self._fit_param_search = None
+        self._criterion_param_search = None
+        self._optimizer_param_search = None
+        self._current_params = None
+
+    def get_param_eval_func(self):
+        return self._param_eval_func
+
+    def set_param_eval_func(self, param_eval_func):
+        if isinstance(param_eval_func, str):
+            super().set_param_eval_func(get_torch_loss_func(param_eval_func)) # TODO - support scoring functions
+        else:
+            super().set_param_eval_func(param_eval_func)
+
+    def get_fit_param_search(self):
+        return self._fit_param_search
+
+    def set_fit_param_search(self, fit_param_search):
+        self._fit_param_search = fit_param_search
+
+    def get_criterion_param_search(self):
+        return self._criterion_param_search
+
+    def set_criterion_param_search(self, criterion_param_search):
+        self._criterion_param_search = criterion_param_search
+
+    def get_optimizer_param_search(self):
+        return self._optimizer_param_search
+
+    def set_optimizer_param_search(self, optimizer_param_search):
+        self._optimizer_param_search = optimizer_param_search
+
+    def reset_next_params(self):
+        self._model_param_search.reset_next_params()
+        self._fit_param_search.reset_next_params()
+        self._criterion_param_search.reset_next_params()
+        self._optimizer_param_search.reset_next_params()
+
+    def get_next_params(self, prev_param_eval=None):
+        if self._current_params is None:
+            self._current_params = {}
+            if self._model_param_search is not None:
+                self._current_params['model'] = self._model_param_search.get_next_params(prev_param_eval)
+            if self._fit_param_search is not None:
+                self._current_params['fit'] = self._fit_param_search.get_next_params(prev_param_eval)
+            if self._criterion_param_search is not None:
+                self._current_params['criterion'] = self._criterion_param_search.get_next_params(prev_param_eval)
+            if self._optimizer_param_search is not None:
+                self._current_params['optimizer'] = self._optimizer_param_search.get_next_params(prev_param_eval)
+        else:
+            # Cycle 'model' params first
+            need_next_model_params = False
+            if self._model_param_search is not None:
+                next_model_params = self._model_param_search.get_next_params(prev_param_eval)
+                need_next_model_params = True
+            else:
+                next_model_params = None
+
+            if next_model_params is None:
+                if need_next_model_params:
+                    self._model_param_search.reset_next_params()
+                    self._current_params['model'] = self._model_param_search.get_next_params(prev_param_eval)
+
+                # Cycle 'fit' params second
+                need_next_fit_params = False
+                if self._fit_param_search is not None:
+                    next_fit_params = self._fit_param_search.get_next_params(prev_param_eval)
+                    need_next_fit_params = True
+                else:
+                    next_fit_params = None
+
+                if next_fit_params is None:
+                    if need_next_fit_params:
+                        self._fit_param_search.reset_next_params()
+                        self._current_params['fit'] = self._fit_param_search.get_next_params(prev_param_eval)
+
+                    # Cycle 'criterion' params third
+                    need_next_criterion_params = False
+                    if self._criterion_param_search is not None:
+                        next_criterion_params = self._criterion_param_search.get_next_params(prev_param_eval)
+                        need_next_criterion_params = True
+                    else:
+                        next_criterion_params = None
+
+                    if next_criterion_params is None:
+                        if need_next_criterion_params:
+                            self._criterion_param_search.reset_next_params()
+                            self._current_params['criterion'] = self._criterion_param_search.get_next_params(prev_param_eval)
+                            
+                        # Cycle 'optimizer' params fourth
+                        if self._optimizer_param_search is not None:
+                            next_optimizer_params = self._optimizer_param_search.get_next_params(prev_param_eval)
+                            if next_optimizer_params is not None:
+                                self._current_params['optimizer'] = next_optimizer_params
+                            else:
+                                self._current_params = None
+                        else:
+                            self._current_params = None
+                    else:
+                        self._current_params['criterion'] = next_criterion_params
+                else:
+                    self._current_params['fit'] = next_fit_params
+            else:
+                self._current_params['model'] = next_model_params
+
+        return self._current_params
+
+    def validate(self):
+        super().validate()
+        if self._fit_param_search is not None and not isinstance(self._fit_param_search, ParamSearch):
+            raise ValueError('fit_param_search much be set to a subclass of ParamSearch')
+        if self._criterion_param_search is not None and not isinstance(self._criterion_param_search, ParamSearch):
+            raise ValueError('criterion_param_search much be set to a subclass of ParamSearch')
+        if self._optimizer_param_search is not None and not isinstance(self._optimizer_param_search, ParamSearch):
+            raise ValueError('optimizer_param_search much be set to a subclass of ParamSearch')
+
+    param_eval_func = property(get_param_eval_func, set_param_eval_func)
+    fit_param_search = property(get_fit_param_search, set_fit_param_search)
+    criterion_param_search = property(get_criterion_param_search, set_criterion_param_search)
+    optimizer_param_search = property(get_optimizer_param_search, set_optimizer_param_search)
+
+
+class SupervisedCVContext():
+    def __init__(self):
+        self._training_context = None
+        self._eval_context = None
+        self._preprocessing_stages = []
+
+    def get_training_context(self):
+        return self._training_context
+
+    def set_training_context(self, training_context):
+        self._training_context = training_context
+
+    def get_eval_context(self):
+        return self._eval_context
+
+    def set_eval_context(self, eval_context):
+        self._eval_context = eval_context
+
+    def get_preprocessing_stages(self):
+        return self._preprocessing_stages
+
+    def add_preprocessing_stage(self, stage):
+        self._preprocessing_stages.append(stage)
+
+    def validate(self):
+        for stage in self._preprocessing_stages:
+            if not isinstance(stage, PreprocessingStageBase):
+                raise ValueError("add_preprocessing_stage() only accepts instances of PreprocessingStageBase")
+        if not isinstance(self._training_context, SupervisedTrainingContext):
+            raise ValueError("set_training_context requires an instance of SupervisedTrainingContext")
+        if not isinstance(self._eval_context, SupervisedEvaluationContext):
+            raise ValueError("set_eval_context requires an instance of SupervisedEvaluationContext")
+        self._training_context.validate()
+        self._eval_context.validate()
+
+    training_context = property(get_training_context, set_training_context)
+    eval_context = property(get_eval_context, set_eval_context)
+
+
+class NestedSupervisedCVContext(SupervisedCVContext):
+    def __init__(self):
+        super().__init__()
+        self._tuning_context = None
+        self._cv_folds_stage = None
+
+    def get_tuning_context(self):
+        return self._tuning_context
+
+    def set_tuning_context(self, tuning_context):
+        self._tuning_context = tuning_context
+
+    def get_cv_folds_stage(self):
+        return self._cv_folds_stage
+
+    def set_cv_folds_stage(self, cv_folds_stage):
+        self._cv_folds_stage = cv_folds_stage
+
+    def validate(self):
+        if not isinstance(self._cv_folds_stage, GenerateCVFoldsStage):
+            raise ValueError("set_valiation_cv_folds_stage() requires an instance of GenerateCVFoldsStage")
+        if not isinstance(self._tuning_context, ModelTuningContext):
+            raise ValueError("set_tuning_context requires an instance of ModelTuningContext")
+        self._tuning_context.validate()
+
+    tuning_context = property(get_tuning_context, set_tuning_context)
+    cv_folds_stage = property(get_cv_folds_stage, set_cv_folds_stage)

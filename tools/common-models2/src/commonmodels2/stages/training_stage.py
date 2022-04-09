@@ -1,7 +1,11 @@
+import numpy as np
+import pandas as pd
+
 from collections.abc import Mapping, Iterable
 from .stage_base import StageBase
 from .prediction_stage import PredictionContext
 from ..models.model import ModelBase
+from ..log.logger import Logger
 
 class ModelTrainingStage(StageBase):
     def __init__(self, train_idx):
@@ -25,10 +29,10 @@ class ModelTrainingStage(StageBase):
 
     def _execute(self, dc):
         data = dc.get_item('data')
-        self.logInfo("Starting model training stage with model {}".format(type(self._training_context.model).__name__))
+        Logger.getInst().info("Starting model training stage with model {}".format(type(self._training_context.model).__name__))
 
         data_train = data.iloc[self._train_idx, :]
-        label_train = data_train[self._training_context.y_label]
+        label_train = data_train[self._training_context.label_cols]
         data_train = data_train[self._training_context.feature_cols]
 
         if label_train.shape[1] == 1:
@@ -36,12 +40,11 @@ class ModelTrainingStage(StageBase):
 
         self._training_context.model.finalize()
         fitted_model = self._training_context.model.fit(data_train, label_train)
-        dc.set_item('trained_model', fitted_model)
+        #dc.set_item('trained_model', fitted_model)
+        dc.set_item('trained_model', self._training_context.model)
         return dc
 
-# This doesn't do anything. We can either update the different models to only hold the model 
-# and use this as a Trainer (contains parameters for training and Model and fit function)
-# Or get rid of this
+
 class TrainingContext(PredictionContext):
     def __init__(self):
         super().__init__()
@@ -58,7 +61,7 @@ class TrainingContext(PredictionContext):
     def validate(self):
         super().validate()
         if not isinstance(self._model, ModelBase):
-            raise TypeError("model must be initialized to instance of ModelBase")
+            raise TypeError("set_model() must be called with an instance of ModelBase")
         return
 
     model = property(get_model, set_model)
@@ -67,26 +70,27 @@ class TrainingContext(PredictionContext):
 class SupervisedTrainingContext(TrainingContext):
     def __init__(self):
         super().__init__()
-        self._y_label = None
+        self._label_cols = None
         return
 
-    def get_y_label(self):
-        return self._y_label
+    def get_label_cols(self):
+        return self._label_cols
 
-    def set_y_label(self, y_label):
-        if isinstance(y_label, str) or isinstance(y_label, Iterable):
-            self._y_label = y_label
+    def set_label_cols(self, label_cols):
+        if isinstance(label_cols, pd.DataFrame):
+            self._label_cols = label_cols.values.flatten()
+        elif isinstance(label_cols, np.ndarray):
+            self._label_cols = label.flatten()
+        elif isinstance(label_cols, str) or isinstance(label_cols, Iterable):
+            self._label_cols = label_cols
         else:
-            raise ValueError('label argument must be Iterable or string type')
+            raise ValueError("label argument must be Iterable or string type")
         return
 
     def validate(self):
         super().validate()
-        if not isinstance(self._y_label, str) and not isinstance(self._y_label, Iterable):
-            raise TypeError("y_label must be initialized to Iterable or string type")
+        if not isinstance(self._label_cols, str) and not isinstance(self._label_cols, Iterable):
+            raise TypeError("set_label_cols() must be initialized to Iterable or string type")
         return
 
-    y_label = property(get_y_label, set_y_label)
-
-
-
+    label_cols = property(get_label_cols, set_label_cols)

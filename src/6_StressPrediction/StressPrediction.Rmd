@@ -14,6 +14,7 @@ library(reshape2)
 library(scales)
 library(car)
 library(ggpubr)
+library(MLmetrics)
 ```
 
 #Load data
@@ -37,6 +38,9 @@ data.shuffled.cross <- subset(data, Label == "stress.d_shuffled")
 data.shuffled.within <- subset(data, Label == "stress.d_shuffledWithinSubject")
 data.actual.lr <- subset(data, Model == "ElasticNet" & Label == "stress.d")
 data.actual.rf <- subset(data, Model == "RandomForestRegressor" & Label == "stress.d")
+data.actual.mlp <- subset(data, Model == "MLP" & Label == "stress.d")
+data.actual.gru <- subset(data, Model == "GRU" & Label == "stress.d")
+data.actual.lstm <- subset(data, Model == "LSTM" & Label == "stress.d")
 #data.actual.rflr <- subset(data, Model == "RFLR" & Label == "stress.d")
 
 # SMAPE
@@ -54,6 +58,9 @@ data.smape.shuffled.cross <- subset(data.smape, Label == "stress.d_shuffled")
 data.smape.shuffled.within <- subset(data.smape, Label == "stress.d_shuffledWithinSubject")
 data.smape.actual.lr <- subset(data.smape, Model == "ElasticNet" & Label == "stress.d")
 data.smape.actual.rf <- subset(data.smape, Model == "RandomForestRegressor" & Label == "stress.d")
+data.smape.actual.mlp <- subset(data.smape, Model == "MLP" & Label == "stress.d")
+data.smape.actual.gru <- subset(data.smape, Model == "GRU" & Label == "stress.d")
+data.smape.actual.lstm <- subset(data.smape, Model == "LSTM" & Label == "stress.d")
 #data.smape.actual.rflr <- subset(data.smape, Model == "RFLR" & Label == "stress.d")
 ```
 
@@ -65,8 +72,8 @@ data.melt <- melt(data[c("snapshot_id", "True_value", "Predicted_value", "Model"
 
 Label.labs <- c("")
 names(Label.labs) <- c("stress.d")
-Model.labs <- c("Elastic Net","Random Forest")
-names(Model.labs) <- c("ElasticNet", "RandomForestRegressor")
+Model.labs <- c("Elastic Net","Random Forest", "Multilayer Perceptron", "Gated Recurrent Unit", "Long Short-term Memory")
+names(Model.labs) <- c("ElasticNet", "RandomForestRegressor", "MLP", "GRU", "LSTM")
 p = ggplot(subset(data.melt, Label == "stress.d"), aes(x=value))
 p = p + geom_histogram(position="identity", aes(y=stat(width*density),group=variable, colour=variable, fill=variable), alpha=0.5)
 p = p + theme_light()  + theme(legend.position = c(0.85, 0.85), legend.background = element_rect(fill="transparent"), panel.background = element_blank(), legend.title=element_blank(), strip.background = element_rect(fill="white"), strip.text = element_text(color="black", face="bold", size=13, hjust=0.5), axis.text.x = element_text(size=12), axis.text.y = element_text(size=13), text = element_text(size=13))
@@ -75,7 +82,7 @@ p = p + facet_wrap(Model ~ Label, labeller = labeller(Model=Model.labs, Label=La
 p = p + xlab("Stress Value") + ylab("Normalized Count")
 p = p + scale_fill_discrete(breaks=c("True_value","Predicted_value"),labels=c("True Value","Predicted Value")) + scale_colour_discrete(breaks=c("True_value","Predicted_value"),labels=c("True Value","Predicted Value"))
 p
-ggsave("lr_rf_gt_densities.pdf", height=3, width=6)
+ggsave("lr_rf_mlp_gru_lstm_gt_densities.pdf", height=3, width=6)
 
 # SMAPE
 data.smape.melt <- melt(data.smape[c("snapshot_id", "True_value", "Predicted_value", "Model", "Label")], id = c("snapshot_id", "Model", "Label"))
@@ -83,8 +90,8 @@ data.smape.melt <- melt(data.smape[c("snapshot_id", "True_value", "Predicted_val
 
 Label.labs <- c("")
 names(Label.labs) <- c("stress.d")
-Model.labs <- c("Elastic Net","Random Forest")
-names(Model.labs) <- c("ElasticNet", "RandomForestRegressor")
+Model.labs <- c("Elastic Net","Random Forest", "Multilayer Perceptron", "Gated Recurrent Unit", "Long Short-term Memory")
+names(Model.labs) <- c("ElasticNet", "RandomForestRegressor", "MLP", "GRU", "LSTM")
 p = ggplot(subset(data.smape.melt, Label == "stress.d"), aes(x=value))
 p = p + geom_histogram(position="identity", aes(y=stat(width*density),group=variable, colour=variable, fill=variable), alpha=0.5)
 p = p + theme_light()  + theme(legend.position = c(0.85, 0.85), legend.background = element_rect(fill="transparent"), panel.background = element_blank(), legend.title=element_blank(), strip.background = element_rect(fill="white"), strip.text = element_text(color="black", face="bold", size=13, hjust=0.5), axis.text.x = element_text(size=12), axis.text.y = element_text(size=13), text = element_text(size=13))
@@ -93,23 +100,73 @@ p = p + facet_wrap(Model ~ Label, labeller = labeller(Model=Model.labs, Label=La
 p = p + xlab("Stress Value") + ylab("Normalized Count")
 p = p + scale_fill_discrete(breaks=c("True_value","Predicted_value"),labels=c("True Value","Predicted Value")) + scale_colour_discrete(breaks=c("True_value","Predicted_value"),labels=c("True Value","Predicted Value"))
 p
-ggsave("lr_rf_gt_densities_smape.pdf", height=3, width=6)
+ggsave("lr_rf_mlp_gru_lstm_gt_densities_smape.pdf", height=3, width=6)
+
+# # Load the MLP data
+# data.mlp <- read.csv(file = "../4_MachineLearning/cm2_results_ncx_feats_cross_subj_mlp/preds.csv");
+# data.mlp$snapshot_id <- 1; # Placeholder
+# data.mlp$Model <- "MLP";
+# data.mlp$Label <- "stress.d";
+# data.mlp$variable <- "Predicted_value";
+# data.mlp$value <- data.mlp$Prediction
+# data.mlp <- subset(data.mlp, select=c("snapshot_id", "Model", "Label", "variable", "value"))
+# 
+# # Clone true values
+# data.mlp.true <- subset(data.melt, Label == "stress.d" & Model == "RandomForestRegressor" & variable == "True_value")
+# #data.mlp.true <- subset(data.mlp.true, select=c("snapshot_id", "Label", "variable", "value"))
+# data.mlp.true$Model <- "MLP"
+# #data.mlp.true <- subset(data.mlp.true, select=c("snapshot_id", "Model", "Label", "variable", "value"))
+# 
+# data.mlp.melt <- rbind(data.melt, data.mlp)
+# data.mlp.melt <- rbind(data.mlp.melt, data.mlp.true)
+# 
+# Label.labs <- c("")
+# names(Label.labs) <- c("stress.d")
+# Model.labs <- c("Multilayer Perceptron","Random Forest")
+# names(Model.labs) <- c("MLP", "RandomForestRegressor")
+# p = ggplot(subset(data.mlp.melt, Label == "stress.d" & Model != "ElasticNet"), aes(x=value))
+# p = p + geom_histogram(position="identity", aes(y=stat(width*density),group=variable, colour=variable, fill=variable), alpha=0.5)
+# p = p + theme_light()  + theme(legend.position = c(0.85, 0.85), legend.background = element_rect(fill="transparent"), panel.background = element_blank(), legend.title=element_blank(), strip.background = element_rect(fill="white"), strip.text = element_text(color="black", face="bold", size=13, hjust=0.5), axis.text.x = element_text(size=12), axis.text.y = element_text(size=13), text = element_text(size=13))
+# p = p + scale_y_continuous(labels = percent)#ylim(0, 302.5)
+# p = p + facet_wrap(Model ~ Label, labeller = labeller(Model=Model.labs, Label=Label.labs))
+# p = p + xlab("Stress Value") + ylab("Normalized Count")
+# p = p + scale_fill_discrete(breaks=c("True_value","Predicted_value"),labels=c("True Value","Predicted Value")) + scale_colour_discrete(breaks=c("True_value","Predicted_value"),labels=c("True Value","Predicted Value"))
+# p
+# ggsave("mlp_rf_gt_densities.pdf", height=3, width=6)
 ```
 
 ```{r}
 data.melt.stress.lr <- subset(data.melt, Label == "stress.d" & Model == "ElasticNet")
 data.melt.stress.rf <- subset(data.melt, Label == "stress.d" & Model == "RandomForestRegressor")
+data.melt.stress.mlp <- subset(data.melt, Label == "stress.d" & Model == "MLP")
+data.melt.stress.gru <- subset(data.melt, Label == "stress.d" & Model == "GRU")
+data.melt.stress.lstm <- subset(data.melt, Label == "stress.d" & Model == "LSTM")
 data.melt.shuffled.cross.lr <- subset(data.melt, Label == "stress.d_shuffled" & Model == "ElasticNet")
 data.melt.shuffled.cross.rf <- subset(data.melt, Label == "stress.d_shuffled" & Model == "RandomForestRegressor")
+data.melt.shuffled.cross.mlp <- subset(data.melt, Label == "stress.d_shuffled" & Model == "MLP")
+data.melt.shuffled.cross.gru <- subset(data.melt, Label == "stress.d_shuffled" & Model == "GRU")
+data.melt.shuffled.cross.lstm <- subset(data.melt, Label == "stress.d_shuffled" & Model == "LSTM")
 data.melt.shuffled.within.lr <- subset(data.melt, Label == "stress.d_shuffledWithinSubject" & Model == "ElasticNet")
 data.melt.shuffled.within.rf <- subset(data.melt, Label == "stress.d_shuffledWithinSubject" & Model == "RandomForestRegressor")
+data.melt.shuffled.within.mlp <- subset(data.melt, Label == "stress.d_shuffledWithinSubject" & Model == "MLP")
+data.melt.shuffled.within.gru <- subset(data.melt, Label == "stress.d_shuffledWithinSubject" & Model == "GRU")
+data.melt.shuffled.within.lstm <- subset(data.melt, Label == "stress.d_shuffledWithinSubject" & Model == "LSTM")
 
 data.smape.melt.stress.lr <- subset(data.smape.melt, Label == "stress.d" & Model == "ElasticNet")
 data.smape.melt.stress.rf <- subset(data.smape.melt, Label == "stress.d" & Model == "RandomForestRegressor")
+data.smape.melt.stress.mlp <- subset(data.smape.melt, Label == "stress.d" & Model == "MLP")
+data.smape.melt.stress.gru <- subset(data.smape.melt, Label == "stress.d" & Model == "GRU")
+data.smape.melt.stress.lstm <- subset(data.smape.melt, Label == "stress.d" & Model == "LSTM")
 data.smape.melt.shuffled.cross.lr <- subset(data.smape.melt, Label == "stress.d_shuffled" & Model == "ElasticNet")
 data.smape.melt.shuffled.cross.rf <- subset(data.smape.melt, Label == "stress.d_shuffled" & Model == "RandomForestRegressor")
+data.smape.melt.shuffled.cross.mlp <- subset(data.smape.melt, Label == "stress.d_shuffled" & Model == "MLP")
+data.smape.melt.shuffled.cross.gru <- subset(data.smape.melt, Label == "stress.d_shuffled" & Model == "GRU")
+data.smape.melt.shuffled.cross.lstm <- subset(data.smape.melt, Label == "stress.d_shuffled" & Model == "LSTM")
 data.smape.melt.shuffled.within.lr <- subset(data.smape.melt, Label == "stress.d_shuffledWithinSubject" & Model == "ElasticNet")
 data.smape.melt.shuffled.within.rf <- subset(data.smape.melt, Label == "stress.d_shuffledWithinSubject" & Model == "RandomForestRegressor")
+data.smape.melt.shuffled.within.mlp <- subset(data.smape.melt, Label == "stress.d_shuffledWithinSubject" & Model == "MLP")
+data.smape.melt.shuffled.within.gru <- subset(data.smape.melt, Label == "stress.d_shuffledWithinSubject" & Model == "GRU")
+data.smape.melt.shuffled.within.lstm <- subset(data.smape.melt, Label == "stress.d_shuffledWithinSubject" & Model == "LSTM")
 
 # LR
 print("Cross-subject LR: (smape, Spearman, shuffled cross smape, shuffled cross Spearman, shuffled within smape, shuffled within Spearman")
@@ -133,12 +190,46 @@ cor(subset(data.melt.shuffled.cross.rf, variable == "True_value")$value, subset(
 Metrics::smape(subset(data.smape.melt.shuffled.within.rf, variable == "True_value")$value, subset(data.smape.melt.shuffled.within.rf, variable == "Predicted_value")$value)
 cor(subset(data.melt.shuffled.within.rf, variable == "True_value")$value, subset(data.melt.shuffled.within.rf, variable == "Predicted_value")$value, method="spearman")
 
+# MLP
+print("Cross-subject MLP: (smape, Spearman, shuffled cross smape, shuffled cross Spearman, shuffled within smape, shuffled within Spearman")
+Metrics::smape(subset(data.smape.melt.stress.mlp, variable == "True_value")$value, subset(data.smape.melt.stress.mlp, variable == "Predicted_value")$value)
+cor(subset(data.melt.stress.mlp, variable == "True_value")$value, subset(data.melt.stress.mlp, variable == "Predicted_value")$value, method="spearman")
+
+Metrics::smape(subset(data.smape.melt.shuffled.cross.mlp, variable == "True_value")$value, subset(data.smape.melt.shuffled.cross.mlp, variable == "Predicted_value")$value)
+cor(subset(data.melt.shuffled.cross.mlp, variable == "True_value")$value, subset(data.melt.shuffled.cross.mlp, variable == "Predicted_value")$value, method="spearman")
+
+Metrics::smape(subset(data.smape.melt.shuffled.within.mlp, variable == "True_value")$value, subset(data.smape.melt.shuffled.within.mlp, variable == "Predicted_value")$value)
+cor(subset(data.melt.shuffled.within.mlp, variable == "True_value")$value, subset(data.melt.shuffled.within.mlp, variable == "Predicted_value")$value, method="spearman")
+
+# GRU
+print("Cross-subject GRU: (smape, Spearman, shuffled cross smape, shuffled cross Spearman, shuffled within smape, shuffled within Spearman")
+Metrics::smape(subset(data.smape.melt.stress.gru, variable == "True_value")$value, subset(data.smape.melt.stress.gru, variable == "Predicted_value")$value)
+cor(subset(data.melt.stress.gru, variable == "True_value")$value, subset(data.melt.stress.gru, variable == "Predicted_value")$value, method="spearman")
+
+Metrics::smape(subset(data.smape.melt.shuffled.cross.gru, variable == "True_value")$value, subset(data.smape.melt.shuffled.cross.gru, variable == "Predicted_value")$value)
+cor(subset(data.melt.shuffled.cross.gru, variable == "True_value")$value, subset(data.melt.shuffled.cross.gru, variable == "Predicted_value")$value, method="spearman")
+
+Metrics::smape(subset(data.smape.melt.shuffled.within.gru, variable == "True_value")$value, subset(data.smape.melt.shuffled.within.gru, variable == "Predicted_value")$value)
+cor(subset(data.melt.shuffled.within.gru, variable == "True_value")$value, subset(data.melt.shuffled.within.gru, variable == "Predicted_value")$value, method="spearman")
+
+# LSTM
+print("Cross-subject LSTM: (smape, Spearman, shuffled cross smape, shuffled cross Spearman, shuffled within smape, shuffled within Spearman")
+Metrics::smape(subset(data.smape.melt.stress.lstm, variable == "True_value")$value, subset(data.smape.melt.stress.lstm, variable == "Predicted_value")$value)
+cor(subset(data.melt.stress.lstm, variable == "True_value")$value, subset(data.melt.stress.lstm, variable == "Predicted_value")$value, method="spearman")
+
+Metrics::smape(subset(data.smape.melt.shuffled.cross.lstm, variable == "True_value")$value, subset(data.smape.melt.shuffled.cross.lstm, variable == "Predicted_value")$value)
+cor(subset(data.melt.shuffled.cross.lstm, variable == "True_value")$value, subset(data.melt.shuffled.cross.lstm, variable == "Predicted_value")$value, method="spearman")
+
+Metrics::smape(subset(data.smape.melt.shuffled.within.lstm, variable == "True_value")$value, subset(data.smape.melt.shuffled.within.lstm, variable == "Predicted_value")$value)
+cor(subset(data.melt.shuffled.within.lstm, variable == "True_value")$value, subset(data.melt.shuffled.within.lstm, variable == "Predicted_value")$value, method="spearman")
+
 ```
 
 #Aggregate at subject level,  models to each other, and to shuffled model
 ```{r, warning = F}
-data.sub <- ddply(data, c("snapshot_id", "Model", "Label"), summarize, n = length(True_value), true.mn = mean(True_value, na.rm = T), pred.mn = mean(Predicted_value, na.rm = T), smape = Metrics::smape(True_value, Predicted_value), rho = cor(True_value, Predicted_value, method = "spearman", use = "pairwise.complete.obs"));
-data.smape.sub <- ddply(data.smape, c("snapshot_id", "Model", "Label"), summarize, n = length(True_value), true.mn = mean(True_value, na.rm = T), pred.mn = mean(Predicted_value, na.rm = T), smape = Metrics::smape(True_value, Predicted_value), rho = cor(True_value, Predicted_value, method = "spearman", use = "pairwise.complete.obs"));
+library(dplyr)
+data.sub <- plyr::ddply(data, c("snapshot_id", "Model", "Label"), summarize, n = length(True_value), true.mn = mean(True_value, na.rm = T), pred.mn = mean(Predicted_value, na.rm = T), smape = Metrics::smape(True_value, Predicted_value), rho = cor(True_value, Predicted_value, method = "spearman", use = "pairwise.complete.obs"));
+data.smape.sub <- plyr::ddply(data.smape, c("snapshot_id", "Model", "Label"), summarize, n = length(True_value), true.mn = mean(True_value, na.rm = T), pred.mn = mean(Predicted_value, na.rm = T), smape = Metrics::smape(True_value, Predicted_value), rho = cor(True_value, Predicted_value, method = "spearman", use = "pairwise.complete.obs"));
 
 ddply(data.sub, c("Model", "Label"), summarize, rho.mn = mean(rho, na.rm = T), rho.sd = sd(rho, na.rm = T), smape.mn = mean(smape, na.rm = T), smape.sd = sd(smape, na.rm = T))
 ddply(data.smape.sub, c("Model", "Label"), summarize, rho.mn = mean(rho, na.rm = T), rho.sd = sd(rho, na.rm = T), smape.mn = mean(smape, na.rm = T), smape.sd = sd(smape, na.rm = T))
@@ -151,8 +242,8 @@ ddply(data.smape.sub, c("Model", "Label"), summarize, rho.mn = mean(rho, na.rm =
 # p_compare$p.format[p_compare$p.adj >= 0.001] = paste0("p=",p_compare$p.format[p_compare$p.adj >= 0.001])
 p = ggplot(data.sub, aes(y = rho, x = Label)) + geom_boxplot(aes(fill=Label), width=0.6, outlier.shape=NA) + geom_hline(yintercept = 0, linetype="dashed")
 p = p + theme_light()  + theme(legend.position = "none", panel.background = element_blank(), strip.background = element_rect(fill="white"), strip.text = element_text(color="black", face="bold", size=13, hjust=0.5), axis.text.x = element_text(size=12), axis.text.y = element_text(size=13), text = element_text(size=13))
-Model.labs <- c("Elastic Net","Random Forest")
-names(Model.labs) <- c("ElasticNet", "RandomForestRegressor")
+Model.labs <- c("Elastic Net","Random Forest", "Multilayer Perceptron", "Gated Recurrent Unit", "Long Short-term Memory")
+names(Model.labs) <- c("ElasticNet", "RandomForestRegressor", "MLP", "GRU", "LSTM")
 p = p + facet_wrap(~Model, labeller=labeller(Model=Model.labs))
 p = p + ylim(-0.35, 1.05)
 p = p + ylab("Spearman Rho") + xlab("")
@@ -168,8 +259,8 @@ ggsave("spearman_boxplot.pdf", height=3, width=6)
 # p_compare$p.format[p_compare$p.adj >= 0.001] = paste0("p=",p_compare$p.format[p_compare$p.adj >= 0.001])
 p = ggplot(data.smape.sub, aes(y = smape, x = Label)) + geom_boxplot(aes(fill=Label), width=0.6, outlier.shape=NA) + geom_hline(yintercept = 0, linetype="dashed")
 p = p + theme_light()  + theme(legend.position = "none", panel.background = element_blank(), strip.background = element_rect(fill="white"), strip.text = element_text(color="black", face="bold", size=13, hjust=0.5), axis.text.x = element_text(size=12), axis.text.y = element_text(size=13), text = element_text(size=13))
-Model.labs <- c("Elastic Net","Random Forest")
-names(Model.labs) <- c("ElasticNet", "RandomForestRegressor")
+Model.labs <- c("Elastic Net","Random Forest", "Multilayer Perceptron", "Gated Recurrent Unit", "Long Short-term Memory")
+names(Model.labs) <- c("ElasticNet", "RandomForestRegressor", "MLP", "GRU", "LSTM")
 p = p + facet_wrap(~Model, labeller=labeller(Model=Model.labs))
 p = p + ylim(0.25, 0.68)
 p = p + ylab("SMAPE") + xlab("")
@@ -180,10 +271,17 @@ p
 ggsave("smape_boxplot.pdf", height=3, width=6)
 
 # Spearman histograms
-p = ggplot(data.sub, aes(x = rho, fill = Label)) + geom_histogram(binwidth = .05) + geom_vline(xintercept = mean(subset(data.sub, Label == "stress.d")$rho, na.rm = T), color = "red") + geom_vline(xintercept = mean(subset(data.sub, Label == "stress.d_shuffled")$rho, na.rm = T), color = "green") + geom_vline(xintercept = mean(subset(data.sub, Label == "stress.d_shuffledWithinSubject")$rho, na.rm = T), color = "blue")
-p = p + theme_light()  + theme(legend.position = c(0.627, 0.8), legend.background = element_rect(fill="transparent"), panel.background = element_blank(), legend.title=element_blank(), strip.background = element_rect(fill="white"), strip.text = element_text(color="black", face="bold", size=13, hjust=0.5), axis.text.x = element_text(size=12), axis.text.y = element_text(size=13), text = element_text(size=13))
-Model.labs <- c("Elastic Net","Random Forest")
-names(Model.labs) <- c("ElasticNet", "RandomForestRegressor")
+data.sub.stress_vline <- subset(data.sub, Label=="stress.d") %>% group_by(Model) %>% summarise(mean_val = mean(rho, na.rm=T))
+data.sub.stressshuf_vline <- subset(data.sub, Label=="stress.d_shuffled") %>% group_by(Model) %>% summarise(mean_val = mean(rho, na.rm=T))
+data.sub.stressshufwtn_vline <- subset(data.sub, Label=="stress.d_shuffledWithinSubject") %>% group_by(Model) %>% summarise(mean_val = mean(rho, na.rm=T))
+#p = ggplot(data.sub, aes(x = rho, fill = Label)) + geom_histogram(binwidth = .05) + geom_vline(xintercept = mean(subset(data.sub, Label == "stress.d")$rho, na.rm = T), color = "red") + geom_vline(xintercept = mean(subset(data.sub, Label == "stress.d_shuffled")$rho, na.rm = T), color = "green") + geom_vline(xintercept = mean(subset(data.sub, Label == "stress.d_shuffledWithinSubject")$rho, na.rm = T), color = "blue")
+p = ggplot(data.sub, aes(x = rho, fill = Label)) + geom_histogram(binwidth = .05)
+p = p + geom_vline(data=data.sub.stress_vline, mapping = aes(xintercept=mean_val), color = "red")
+p = p + geom_vline(data=data.sub.stressshuf_vline, mapping = aes(xintercept=mean_val), color = "green")
+p = p + geom_vline(data=data.sub.stressshufwtn_vline, mapping = aes(xintercept=mean_val), color = "blue")
+p = p + theme_light()  + theme(legend.position = c(0.85, 0.25), legend.background = element_rect(fill="transparent"), panel.background = element_blank(), legend.title=element_blank(), strip.background = element_rect(fill="white"), strip.text = element_text(color="black", face="bold", size=10, hjust=0.5), axis.text.x = element_text(size=12), axis.text.y = element_text(size=13), text = element_text(size=13))
+Model.labs <- c("Elastic Net","Random Forest", "Multilayer Perceptron", "Gated Recurrent Unit", "Long Short-term Memory")
+names(Model.labs) <- c("ElasticNet", "RandomForestRegressor", "MLP", "GRU", "LSTM")
 p = p + facet_wrap(~Model, labeller=labeller(Model=Model.labs))
 p = p + xlab("Spearman Rho") + ylab("Subject Count")
 p = p + scale_fill_discrete(breaks=c("stress.d","stress.d_shuffled","stress.d_shuffledWithinSubject"),labels=c("Stress","Shuffled\nCross-subj.","Shuffled\nWithin-subj.")) + scale_colour_discrete(breaks=c("stress.d","stress.d_shuffled","stress.d_shuffledWithinSubject"),labels=c("Stress","Shuffled\nCross-subj.","Shuffled\nWithin-subj."))
@@ -191,13 +289,20 @@ p
 ggsave("spearman_histograms.pdf", height=3, width=6)
 
 # SMAPE histograms
-p = ggplot(data.smape.sub, aes(x = smape, fill = Label)) + geom_histogram(binwidth = .02) + geom_vline(xintercept = mean(subset(data.sub, Label == "stress.d")$smape, na.rm = T), color = "red") + geom_vline(xintercept = mean(subset(data.sub, Label == "stress.d_shuffled")$smape, na.rm = T), color = "green") + geom_vline(xintercept = mean(subset(data.sub, Label == "stress.d_shuffledWithinSubject")$smape, na.rm = T), color = "blue")
-p = p + theme_light()  + theme(legend.position = c(0.627, 0.8), legend.background = element_rect(fill="transparent"), panel.background = element_blank(), legend.title=element_blank(), strip.background = element_rect(fill="white"), strip.text = element_text(color="black", face="bold", size=13, hjust=0.5), axis.text.x = element_text(size=12), axis.text.y = element_text(size=13), text = element_text(size=13))
-Model.labs <- c("Elastic Net","Random Forest")
-names(Model.labs) <- c("ElasticNet", "RandomForestRegressor")
+data.smape.sub.stress_vline <- subset(data.smape.sub, Label=="stress.d") %>% group_by(Model) %>% summarise(mean_val = mean(smape, na.rm=T))
+data.smape.sub.stressshuf_vline <- subset(data.smape.sub, Label=="stress.d_shuffled") %>% group_by(Model) %>% summarise(mean_val = mean(smape, na.rm=T))
+data.smape.sub.stressshufwtn_vline <- subset(data.smape.sub, Label=="stress.d_shuffledWithinSubject") %>% group_by(Model) %>% summarise(mean_val = mean(smape, na.rm=T))
+p = ggplot(data.smape.sub, aes(x = smape, fill = Label)) + geom_histogram(binwidth = .02)
+p = p + geom_vline(data=data.smape.sub.stress_vline, mapping = aes(xintercept=mean_val), color = "red")
+p = p + geom_vline(data=data.smape.sub.stressshuf_vline, mapping = aes(xintercept=mean_val), color = "green")
+p = p + geom_vline(data=data.smape.sub.stressshufwtn_vline, mapping = aes(xintercept=mean_val), color = "blue")
+p = p + theme_light()  + theme(legend.position = c(0.85, 0.25), legend.background = element_rect(fill="transparent"), panel.background = element_blank(), legend.title=element_blank(), strip.background = element_rect(fill="white"), strip.text = element_text(color="black", face="bold", size=10, hjust=0.5), axis.text.x = element_text(size=12), axis.text.y = element_text(size=13), text = element_text(size=13))
+Model.labs <- c("Elastic Net","Random Forest", "Multilayer Perceptron", "Gated Recurrent Unit", "Long Short-term Memory")
+names(Model.labs) <- c("ElasticNet", "RandomForestRegressor", "MLP", "GRU", "LSTM")
 p = p + facet_wrap(~Model, labeller=labeller(Model=Model.labs))
 p = p + xlab("SMAPE") + ylab("Subject Count")
 p = p + scale_fill_discrete(breaks=c("stress.d","stress.d_shuffled","stress.d_shuffledWithinSubject"),labels=c("Stress","Shuffled\nCross-subj.","Shuffled\nWithin-subj.")) + scale_colour_discrete(breaks=c("stress.d","stress.d_shuffled","stress.d_shuffledWithinSubject"),labels=c("Stress","Shuffled\nCross-subj.","Shuffled\nWithin-subj."))
+p = p + scale_x_continuous(labels = label_number(accuracy=0.1))
 p
 ggsave("smape_histograms.pdf", height=3, width=6)
 ```
@@ -208,57 +313,93 @@ data.sub.cast <- as.data.frame(data.table::dcast(data.table::setDT(data.sub), sn
 data.smape.sub.cast <- as.data.frame(data.table::dcast(data.table::setDT(data.smape.sub), snapshot_id ~ Model + Label, value.var = c("smape", "rho", "pred.mn", "true.mn")))
 
 t.test(data.smape.sub.cast$smape_ElasticNet_stress.d, data.smape.sub.cast$smape_ElasticNet_stress.d_shuffled, paired = T)
-
 t.test(data.smape.sub.cast$smape_ElasticNet_stress.d, data.smape.sub.cast$smape_ElasticNet_stress.d_shuffledWithinSubject, paired = T)
-
 t.test(data.smape.sub.cast$smape_RandomForestRegressor_stress.d, data.smape.sub.cast$smape_RandomForestRegressor_stress.d_shuffled, paired = T)
-
 t.test(data.smape.sub.cast$smape_RandomForestRegressor_stress.d, data.smape.sub.cast$smape_RandomForestRegressor_stress.d_shuffledWithinSubject, paired = T)
+t.test(data.smape.sub.cast$smape_MLP_stress.d, data.smape.sub.cast$smape_MLP_stress.d_shuffled, paired = T)
+t.test(data.smape.sub.cast$smape_MLP_stress.d, data.smape.sub.cast$smape_MLP_stress.d_shuffledWithinSubject, paired = T)
+t.test(data.smape.sub.cast$smape_GRU_stress.d, data.smape.sub.cast$smape_GRU_stress.d_shuffled, paired = T)
+t.test(data.smape.sub.cast$smape_GRU_stress.d, data.smape.sub.cast$smape_GRU_stress.d_shuffledWithinSubject, paired = T)
+t.test(data.smape.sub.cast$smape_LSTM_stress.d, data.smape.sub.cast$smape_LSTM_stress.d_shuffled, paired = T)
+t.test(data.smape.sub.cast$smape_LSTM_stress.d, data.smape.sub.cast$smape_LSTM_stress.d_shuffledWithinSubject, paired = T)
+
 
 t.test(data.sub.cast$rho_ElasticNet_stress.d, data.sub.cast$rho_ElasticNet_stress.d_shuffled, paired = T)
-
 t.test(data.sub.cast$rho_ElasticNet_stress.d, data.sub.cast$rho_ElasticNet_stress.d_shuffledWithinSubject, paired = T)
-
 t.test(data.sub.cast$rho_RandomForestRegressor_stress.d, data.sub.cast$rho_RandomForestRegressor_stress.d_shuffled, paired = T)
-
 t.test(data.sub.cast$rho_RandomForestRegressor_stress.d, data.sub.cast$rho_RandomForestRegressor_stress.d_shuffledWithinSubject, paired = T)
+t.test(data.sub.cast$rho_MLP_stress.d, data.sub.cast$rho_MLP_stress.d_shuffled, paired = T)
+t.test(data.sub.cast$rho_MLP_stress.d, data.sub.cast$rho_MLP_stress.d_shuffledWithinSubject, paired = T)
+t.test(data.sub.cast$rho_GRU_stress.d, data.sub.cast$rho_GRU_stress.d_shuffled, paired = T)
+t.test(data.sub.cast$rho_GRU_stress.d, data.sub.cast$rho_GRU_stress.d_shuffledWithinSubject, paired = T)
+t.test(data.sub.cast$rho_LSTM_stress.d, data.sub.cast$rho_LSTM_stress.d_shuffled, paired = T)
+t.test(data.sub.cast$rho_LSTM_stress.d, data.sub.cast$rho_LSTM_stress.d_shuffledWithinSubject, paired = T)
+
 
 t.test(data.smape.sub.cast$smape_ElasticNet_stress.d, data.smape.sub.cast$smape_RandomForestRegressor_stress.d, paired = T)
+t.test(data.smape.sub.cast$smape_ElasticNet_stress.d, data.smape.sub.cast$smape_MLP_stress.d, paired = T)
+t.test(data.smape.sub.cast$smape_ElasticNet_stress.d, data.smape.sub.cast$smape_GRU_stress.d, paired = T)
+t.test(data.smape.sub.cast$smape_ElasticNet_stress.d, data.smape.sub.cast$smape_LSTM_stress.d, paired = T)
+t.test(data.smape.sub.cast$smape_RandomForestRegressor_stress.d, data.smape.sub.cast$smape_MLP_stress.d, paired = T)
+t.test(data.smape.sub.cast$smape_RandomForestRegressor_stress.d, data.smape.sub.cast$smape_GRU_stress.d, paired = T)
+t.test(data.smape.sub.cast$smape_RandomForestRegressor_stress.d, data.smape.sub.cast$smape_LSTM_stress.d, paired = T)
+t.test(data.smape.sub.cast$smape_MLP_stress.d, data.smape.sub.cast$smape_GRU_stress.d, paired = T)
+t.test(data.smape.sub.cast$smape_MLP_stress.d, data.smape.sub.cast$smape_LSTM_stress.d, paired = T)
+t.test(data.smape.sub.cast$smape_GRU_stress.d, data.smape.sub.cast$smape_LSTM_stress.d, paired = T)
+
 
 t.test(data.sub.cast$rho_ElasticNet_stress.d, data.sub.cast$rho_RandomForestRegressor_stress.d, paired = T)
+t.test(data.sub.cast$rho_ElasticNet_stress.d, data.sub.cast$rho_MLP_stress.d, paired = T)
+t.test(data.sub.cast$rho_ElasticNet_stress.d, data.sub.cast$rho_GRU_stress.d, paired = T)
+t.test(data.sub.cast$rho_ElasticNet_stress.d, data.sub.cast$rho_LSTM_stress.d, paired = T)
+t.test(data.sub.cast$rho_RandomForestRegressor_stress.d, data.sub.cast$rho_MLP_stress.d, paired = T)
+t.test(data.sub.cast$rho_RandomForestRegressor_stress.d, data.sub.cast$rho_GRU_stress.d, paired = T)
+t.test(data.sub.cast$rho_RandomForestRegressor_stress.d, data.sub.cast$rho_LSTM_stress.d, paired = T)
+t.test(data.sub.cast$rho_MLP_stress.d, data.sub.cast$rho_GRU_stress.d, paired = T)
+t.test(data.sub.cast$rho_MLP_stress.d, data.sub.cast$rho_LSTM_stress.d, paired = T)
+t.test(data.sub.cast$rho_GRU_stress.d, data.sub.cast$rho_LSTM_stress.d, paired = T)
+
 
 t.test(data.sub.cast$true.mn_ElasticNet_stress.d, data.sub.cast$pred.mn_ElasticNet_stress.d, paired = T)
-
 t.test(data.sub.cast$true.mn_RandomForestRegressor_stress.d, data.sub.cast$pred.mn_RandomForestRegressor_stress.d, paired = T)
+t.test(data.sub.cast$true.mn_MLP_stress.d, data.sub.cast$pred.mn_MLP_stress.d, paired = T)
+t.test(data.sub.cast$true.mn_GRU_stress.d, data.sub.cast$pred.mn_GRU_stress.d, paired = T)
+t.test(data.sub.cast$true.mn_LSTM_stress.d, data.sub.cast$pred.mn_LSTM_stress.d, paired = T)
+
 
 t.test(data.smape.sub.cast$true.mn_ElasticNet_stress.d, data.smape.sub.cast$pred.mn_ElasticNet_stress.d, paired = T)
-
 t.test(data.smape.sub.cast$true.mn_RandomForestRegressor_stress.d, data.smape.sub.cast$pred.mn_RandomForestRegressor_stress.d, paired = T)
-
+t.test(data.smape.sub.cast$true.mn_MLP_stress.d, data.smape.sub.cast$pred.mn_MLP_stress.d, paired = T)
+t.test(data.smape.sub.cast$true.mn_GRU_stress.d, data.smape.sub.cast$pred.mn_GRU_stress.d, paired = T)
+t.test(data.smape.sub.cast$true.mn_LSTM_stress.d, data.smape.sub.cast$pred.mn_LSTM_stress.d, paired = T)
 ```
 
 
-#Compare LR rho to rho from Garmin stress and HRV
+#Compare models' rho to rho from Garmin stress and HRV
 ```{r, warning = F}
 garmin_vars <- c("avg_garmin_stress")
 hrv_vars <- c("sdann_8_to_6");
+data_var <- data.actual.rf
+model_var <- "RandomForestRegressor"
+#data_var <- data.actual.lstm
+#model_var <- "LSTM"
 
 #data.comp <- ddply(data.actual.rf, c("snapshot_id", "Model"), summarize, rho.model = cor(True_value, Predicted_value, method = "spearman", use = "pairwise.complete.obs"), rho.garmin = cor(True_value, avg_garmin_stress, method = "spearman", use = "pairwise.complete.obs"), rho.hrv = cor(-True_value, sdann_8_to_6, method = "spearman", use = "pairwise.complete.obs"));
 
-data.comp <- ddply(data.actual.rf, c("snapshot_id", "Model"), summarize, rho.model = cor(True_value, Predicted_value, method = "spearman", use = "pairwise.complete.obs"), rho.garmin = cor(True_value, avg_garmin_stress, method = "spearman", use = "pairwise.complete.obs"));
+data.comp <- ddply(data_var, c("snapshot_id", "Model"), summarize, rho.model = cor(True_value, Predicted_value, method = "spearman", use = "pairwise.complete.obs"), rho.garmin = cor(True_value, avg_garmin_stress, method = "spearman", use = "pairwise.complete.obs"));
 
 data.comp.hrv <- ddply(data.actual, c("snapshot_id"), summarize, rho.hrv = cor(-True_value, sdann_8_to_6, method="spearman", use="pairwise.complete.obs"));
 
 data.comp.melt <- melt(data.comp, id = c("snapshot_id", "Model"))
 data.comp.hrv.melt <- melt(data.comp.hrv, id=c("snapshot_id"))
-data.comp.hrv.melt$Model <- "RandomForestRegressor"
+data.comp.hrv.melt$Model <- model_var
 data.comp.melt <- rbind(data.comp.melt, data.comp.hrv.melt)
 
 ddply(data.comp.melt, c("Model", "variable"), summarize, rho.mn = mean(value, na.rm = T), rho.sd = sd(value, na.rm = T))
 
-t.test(subset(data.comp.melt, Model=="RandomForestRegressor" & variable=="rho.model")$value, mu=0, alternative = "two.sided")
-t.test(subset(data.comp.melt, Model=="RandomForestRegressor" & variable=="rho.garmin")$value, mu=0, alternative = "two.sided")
-t.test(subset(data.comp.melt, Model=="RandomForestRegressor" & variable=="rho.hrv")$value, mu=0, alternative = "two.sided")
+t.test(subset(data.comp.melt, Model==model_var & variable=="rho.model")$value, mu=0, alternative = "two.sided")
+t.test(subset(data.comp.melt, Model==model_var & variable=="rho.garmin")$value, mu=0, alternative = "two.sided")
+t.test(subset(data.comp.melt, Model==model_var & variable=="rho.hrv")$value, mu=0, alternative = "two.sided")
 
 #Show subject level means/CIs comparing the model, garmin, and HRV rhos
 p_compare <- compare_means(value~variable, data=data.comp.melt, method="t.test", paired=T) %>% mutate(y.position = c(0.78, 0.95, 0.65))
@@ -343,10 +484,10 @@ data.merged.rf$incomeRcd <- relevel(as.factor(data.merged.rf$incomeRcd), ref="<5
 data.merged.rf$cohortRcd <- relevel(as.factor(data.merged.rf$cohortRcd), ref="U")
 data.merged.rf$educRcd <- relevel(as.factor(data.merged.rf$educRcd), ref="HS+")
 
-mt <- lm(true.mn ~ n + age + gender + lang  + educRcd + incomeRcd + supervise + cohortRcd - 1, data = data.merged.rf)
+mt <- lm(true.mn ~ n + age + gender + lang  + educRcd + incomeRcd + supervise + cohortRcd, data = data.merged.rf)
 #m1 <- lm(rho ~ n + age + gender + lang  + educRcd + incomeRcd + supervise + cohortRcd, data = data.merged.rf)
-m1 <- lm(pred.mn ~ n + age + gender + lang  + educRcd + incomeRcd + supervise + cohortRcd - 1, data = data.merged.rf)
-m2 <- lm(rho ~ n + age + gender + lang  + educRcd + incomeRcd + supervise + cohortRcd - 1, data = data.merged.rf)
+m1 <- lm(pred.mn ~ n + age + gender + lang  + educRcd + incomeRcd + supervise + cohortRcd, data = data.merged.rf)
+m2 <- lm(rho ~ n + age + gender + lang  + educRcd + incomeRcd + supervise + cohortRcd, data = data.merged.rf)
 
 tab_model(mt, m1, m2, show.std = T, show.ci = F, show.est = F)
 ```
@@ -375,7 +516,91 @@ summary(as.numeric(pred_perf))
 #importance(rf)
 
 ```
-# 
+# Load the enhanced models with the additional STAI feature
 ```{r}
+# Spearman
+data.stai <- read.csv(file = "../5_PredictionPreprocessing/results/ncx_feats_cross_subj_regressions_LR_RF_with_STAI.csv");
 
+#data.hrv <- read.csv(file = "../../dataset/IARPA/hrv_hr_stress/hrv_summary-sdnn.csv", na.strings = "NULL");
+data.stai <- merge(data.stai, data.hrv, by = c("snapshot_id", "date"), all.x = T)
+
+# BB - Remove the RFLR models
+data.stai <- data.stai[!(data$Model=="RFLR"),]
+
+data.stai.actual <- subset(data.stai, Label == "stress.d")
+data.stai.shuffled.cross <- subset(data.stai, Label == "stress.d_shuffled")
+data.stai.shuffled.within <- subset(data.stai, Label == "stress.d_shuffledWithinSubject")
+data.stai.actual.lr <- subset(data.stai, Model == "ElasticNet" & Label == "stress.d")
+data.stai.actual.rf <- subset(data.stai, Model == "RandomForestRegressor" & Label == "stress.d")
 ```
+
+# Summarize RF+STAI
+```{r}
+data.stai.comp <- ddply(data.stai.actual.rf, c("snapshot_id", "Model"), summarize, rho.model = cor(True_value, Predicted_value, method = "spearman", use = "pairwise.complete.obs"));
+
+data.stai.comp.melt <- melt(data.stai.comp, id = c("snapshot_id", "Model"))
+
+ddply(data.stai.comp.melt, c("Model", "variable"), summarize, rho.mn = mean(value, na.rm = T), rho.sd = sd(value, na.rm = T))
+```
+# Summarize RF+STAI binarized
+```{r}
+median_binarize <- function(col, ref_col) {
+  as.integer(col > median(ref_col))
+}
+
+confusion_mat <- function(true, pred) {
+  pred_pos <- pred == 1;
+  pred_neg <- pred == 0;
+  true_pos <- true == 1;
+  true_neg <- true == 0;
+  tp <- sum(true_pos & pred_pos);
+  tn <- sum(true_neg & pred_neg);
+  fp <- sum(true_neg & pred_pos);
+  fn <- sum(true_pos & pred_neg);
+  c(tp, fn, fp, tn);
+}
+
+f1_score <- function(true, pred) {
+  prec <- precision(true, pred)
+  rec <- recall(true, pred)
+  (2*prec*rec)/(prec+rec)
+}
+
+accuracy <- function(true, pred) {
+  conf_mat <- confusion_mat(true, pred);
+  (conf_mat[1]+conf_mat[4])/(sum(conf_mat));
+}
+
+precision <- function(true, pred) {
+  conf_mat <- confusion_mat(true, pred);
+  conf_mat[1]/(conf_mat[1]+conf_mat[3]);
+}
+
+recall <- function(true, pred) {
+  conf_mat <- confusion_mat(true, pred);
+  conf_mat[1]/(conf_mat[1]+conf_mat[2]);
+}
+
+
+data.stai.actual.rf.binary <- ddply(data.stai.actual.rf, c("snapshot_id", "Model"), summarize, True_value_binary = median_binarize(True_value, True_value), Predicted_value_binary = median_binarize(Predicted_value, Predicted_value));
+data.stai.comp.binary <- ddply(data.stai.actual.rf.binary, c("snapshot_id", "Model"), summarize, accuracy.model = accuracy(True_value_binary, Predicted_value_binary), precision.model = precision(True_value_binary, Predicted_value_binary), recall.model = recall(True_value_binary, Predicted_value_binary), f1.model = f1_score(True_value_binary, Predicted_value_binary));
+
+data.stai.comp.melt.binary <- melt(data.stai.comp.binary, id = c("snapshot_id", "Model"))
+
+ddply(data.stai.comp.melt.binary, c("Model", "variable"), summarize, mn = mean(value, na.rm = T), sd = sd(value, na.rm = T))
+```
+
+# Compute significance of difference between enhanced model and relevant standard version
+```{r, warning=F}
+data.stai.sub <- ddply(data.stai, c("snapshot_id", "Model", "Label"), summarize, n = length(True_value), true.mn = mean(True_value, na.rm = T), pred.mn = mean(Predicted_value, na.rm = T), rho = cor(True_value, Predicted_value, method = "spearman", use = "pairwise.complete.obs"));
+
+data.stai.sub.cast <- as.data.frame(data.table::dcast(data.table::setDT(data.stai.sub), snapshot_id ~ Model + Label, value.var = c("rho", "pred.mn", "true.mn")))
+data.stai.sub.cast <- data.stai.sub.cast[rowSums(is.na(data.stai.sub.cast[,])) != ncol(data.stai.sub.cast),]
+
+t.test(data.stai.sub.cast$rho_RandomForestRegressor_stress.d, data.stai.sub.cast$rho_RandomForestRegressor_stress.d_shuffled, paired = T)
+
+t.test(data.stai.sub.cast$rho_RandomForestRegressor_stress.d, data.stai.sub.cast$rho_RandomForestRegressor_stress.d_shuffledWithinSubject, paired = T)
+
+t.test(data.stai.sub.cast$rho_RandomForestRegressor_stress.d, data.sub.cast$rho_RandomForestRegressor_stress.d, paired = T)
+```
+
