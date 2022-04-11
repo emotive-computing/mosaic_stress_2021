@@ -16,9 +16,9 @@ from commonmodels2.stages.training_stage import SupervisedTrainingContext
 from commonmodels2.stages.evaluation_stage import SupervisedEvaluationContext
 
 def my_sklearn_model_func(params):
-    #model = RandomForestClassifier()
+    model = RandomForestClassifier()
     #model = KNeighborsClassifier()
-    model = SVC()
+    #model = SVC()
     model.set_params(**params)
     return model
 
@@ -54,9 +54,9 @@ def RunML():
     ncv_context.training_context = training_context
 
     tuning_context = SklearnModelTuningContext()
-    #tuning_context.model_param_search = GridParamSearch({'n_estimators': [100], 'max_depth': [10]})
+    tuning_context.model_param_search = GridParamSearch({'n_estimators': [30, 60, 100, 120], 'max_depth': [30, 60, 100, 120, 150]})
     #tuning_context.model_param_search = GridParamSearch({'n_neighbors':[3,4,5,8,12]})
-    tuning_context.model_param_search = GridParamSearch({'gamma':[2], 'C': [1e-4, 1e-3, 1e-2, 1e-1, 1]})
+    #tuning_context.model_param_search = GridParamSearch({'gamma':[2], 'C': [1e-4, 1e-3, 1e-2, 1e-1, 1]})
     tuning_context.param_eval_func = 'f1'
     tuning_context.param_eval_goal = 'max'
     ncv_context.tuning_context = tuning_context
@@ -67,9 +67,9 @@ def RunML():
     ncv_context.eval_context = eval_context
 
     cv_folds_stage = GenerateCVFoldsStage(strategy='stratified_grouped',
-                                          strategy_args={'num_folds': 5,
+                                          strategy_args={'num_folds': 3,
                                                          'stratify_on': 'stress.d',
-                                                         'percentile_bins': 2,
+                                                         'bin_edges': [0.5],
                                                          'seed': 3748,
                                                          'group_by': 'snapshot_id'})
     ncv_context.cv_folds_stage = cv_folds_stage
@@ -82,7 +82,7 @@ def RunML():
     p.addStage(s3)
     p.run()
 
-    p.getDC().save('cm2_results_ncx_feats_cross_subj_sklearn_binary')
+    p.getDC().save('cm2_results_ncx_feats_cross_subj_rf_binary')
 
 
 if __name__ == '__main__':

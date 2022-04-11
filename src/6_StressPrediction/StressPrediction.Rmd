@@ -389,6 +389,7 @@ model_var <- "RandomForestRegressor"
 data.comp <- ddply(data_var, c("snapshot_id", "Model"), summarize, rho.model = cor(True_value, Predicted_value, method = "spearman", use = "pairwise.complete.obs"), rho.garmin = cor(True_value, avg_garmin_stress, method = "spearman", use = "pairwise.complete.obs"));
 
 data.comp.hrv <- ddply(data.actual, c("snapshot_id"), summarize, rho.hrv = cor(-True_value, sdann_8_to_6, method="spearman", use="pairwise.complete.obs"));
+data.comp.hrv <- data.comp.hrv[data.comp.hrv$snapshot_id %in% data.comp$snapshot_id,]
 
 data.comp.melt <- melt(data.comp, id = c("snapshot_id", "Model"))
 data.comp.hrv.melt <- melt(data.comp.hrv, id=c("snapshot_id"))
@@ -541,53 +542,6 @@ data.stai.comp <- ddply(data.stai.actual.rf, c("snapshot_id", "Model"), summariz
 data.stai.comp.melt <- melt(data.stai.comp, id = c("snapshot_id", "Model"))
 
 ddply(data.stai.comp.melt, c("Model", "variable"), summarize, rho.mn = mean(value, na.rm = T), rho.sd = sd(value, na.rm = T))
-```
-# Summarize RF+STAI binarized
-```{r}
-median_binarize <- function(col, ref_col) {
-  as.integer(col > median(ref_col))
-}
-
-confusion_mat <- function(true, pred) {
-  pred_pos <- pred == 1;
-  pred_neg <- pred == 0;
-  true_pos <- true == 1;
-  true_neg <- true == 0;
-  tp <- sum(true_pos & pred_pos);
-  tn <- sum(true_neg & pred_neg);
-  fp <- sum(true_neg & pred_pos);
-  fn <- sum(true_pos & pred_neg);
-  c(tp, fn, fp, tn);
-}
-
-f1_score <- function(true, pred) {
-  prec <- precision(true, pred)
-  rec <- recall(true, pred)
-  (2*prec*rec)/(prec+rec)
-}
-
-accuracy <- function(true, pred) {
-  conf_mat <- confusion_mat(true, pred);
-  (conf_mat[1]+conf_mat[4])/(sum(conf_mat));
-}
-
-precision <- function(true, pred) {
-  conf_mat <- confusion_mat(true, pred);
-  conf_mat[1]/(conf_mat[1]+conf_mat[3]);
-}
-
-recall <- function(true, pred) {
-  conf_mat <- confusion_mat(true, pred);
-  conf_mat[1]/(conf_mat[1]+conf_mat[2]);
-}
-
-
-data.stai.actual.rf.binary <- ddply(data.stai.actual.rf, c("snapshot_id", "Model"), summarize, True_value_binary = median_binarize(True_value, True_value), Predicted_value_binary = median_binarize(Predicted_value, Predicted_value));
-data.stai.comp.binary <- ddply(data.stai.actual.rf.binary, c("snapshot_id", "Model"), summarize, accuracy.model = accuracy(True_value_binary, Predicted_value_binary), precision.model = precision(True_value_binary, Predicted_value_binary), recall.model = recall(True_value_binary, Predicted_value_binary), f1.model = f1_score(True_value_binary, Predicted_value_binary));
-
-data.stai.comp.melt.binary <- melt(data.stai.comp.binary, id = c("snapshot_id", "Model"))
-
-ddply(data.stai.comp.melt.binary, c("Model", "variable"), summarize, mn = mean(value, na.rm = T), sd = sd(value, na.rm = T))
 ```
 
 # Compute significance of difference between enhanced model and relevant standard version
