@@ -25,11 +25,10 @@ def RunML():
     # Create a PyTorch model using the custom model create function above
     ptm = PyTorchModel()
     ptm.set_model_create_func(my_mlp_model_func)
-    ptm.set_fit_params({'lr': 1e-1, 'batch_size':32, 'train_split': None, 'max_epochs': 500})
-    ptm.set_criterion_params({'criterion': 'smooth_l1_loss'})
-    ptm.set_model_params({'num_layers': 3, 'layer_width': 30, 'activation_func': nn.ReLU})
-    # BB note - I was at layer_width=10
-    ptm.set_optimizer_params({'optimizer': 'sgd'})
+    ptm.set_fit_params({'lr': 1e-3, 'batch_size':32, 'train_split': None, 'max_epochs': 500})
+    ptm.set_criterion_params({'criterion': 'mean_squared_error'})
+    ptm.set_model_params({'num_layers': 3, 'layer_width': 30, 'activation_func': nn.GELU})
+    ptm.set_optimizer_params({'optimizer': 'adam'})
 
     p = Pipeline()
 

@@ -86,9 +86,10 @@ def RunML():
     tfm.set_model_create_func(my_gru_model_func)
     tfm.set_fit_transformer(my_timeseries_transformer)
     tfm.set_prediction_transformer(my_prediction_transformer)
-    tfm.set_model_params({'num_layers': 3, 'layer_width': 10, 'activation_func': 'gelu'})
-    tfm.set_fit_params({'batch_size': 32, 'validation_split': 0, 'epochs': 100})
-    tfm.set_compile_params({'optimizer': 'sgd', 'loss': 'huber'})
+    tfm.set_model_params({'num_layers': 3, 'layer_width': 30, 'activation_func': 'gelu'})
+    tfm.set_fit_params({'batch_size': 32, 'validation_split': 0, 'epochs': 500})
+    optimizer = keras.optimizers.Adam(learning_rate=1e-3)
+    tfm.set_compile_params({'optimizer': optimizer, 'loss': 'mse'})
 
     p = Pipeline()
 
