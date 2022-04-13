@@ -69,7 +69,7 @@ class GenerateCVFoldsStage(StageBase):
             skf = StratifiedKFold(n_splits=args['num_folds'])
 
         if 'percentile_bins' in args.keys():
-            y = pd.qcut(data[args['stratify_on']].argsort(kind='stable'), q=args['percentile_bins'], labels=range(split)).tolist()
+            y = pd.qcut(data[args['stratify_on']].argsort(kind='stable'), q=args['percentile_bins'], labels=range(args['percentile_bins'])).tolist()
         else:
             y = np.digitize(data[args['stratify_on']], bins=args['bin_edges'])
         return list(skf.split(data, y))
@@ -429,7 +429,7 @@ class ModelTuningContext(ABC):
     def get_next_params(self, prev_param_eval=None):
         next_params = self._model_param_search.get_next_params(prev_param_eval)
         if next_params is not None:
-            return {'model': self._model_param_search.get_next_params(prev_param_eval)}
+            return {'model': next_params}
         else:
             return None
 

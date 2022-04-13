@@ -4,6 +4,7 @@ import copy
 import numpy as np
 import pandas as pd
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from sklearn.preprocessing import MinMaxScaler, StandardScaler, OneHotEncoder, LabelEncoder, Binarizer
 from sklearn.impute import SimpleImputer
 from .stage_base import StageBase
@@ -196,16 +197,22 @@ class EncoderPreprocessingStage(PreprocessingStageBase):
                     trans_data = copy.deepcopy(data)
                     for group_id, group_df in trans_data.groupby(by=self._group_by, axis=0, as_index=False, sort=False):
                         for col_idx in np.where(group_df.columns != self._group_by):
-                            median_val = np.nanmedian(group_df.iloc[:,col_idx])
+                            if not isinstance(col_idx, Iterable):
+                                col_idx = [col_idx] # A list indexer for a DF will return a DF, not a series
+                            group_df_col = group_df.iloc[:,col_idx]
+                            median_val = np.nanmedian(group_df_col)
                             binarizer = Binarizer(threshold=median_val, copy=False)
-                            bin_trans_data = binarizer.transform(group_df.iloc[:,col_idx])
-                            trans_data.loc[group_df.index, trans_data.columns != self._group_by] = bin_trans_data
+                            bin_trans_data = binarizer.transform(group_df_col)
+                            trans_data.loc[group_df.index, group_df_col.columns[0] == trans_data.columns] = bin_trans_data
                 else:
                     trans_data = copy.deepcopy(data)
                     for col_idx in range(trans_data.shape[1]):
-                        median_val = np.nanmedian(trans_data.iloc[:,col_idx])
+                        if not isinstance(col_idx, Iterable):
+                            col_idx = [col_idx] # A list indexer for a DF will return a DF, not a series
+                        trans_data_col = trans_data.iloc[:,col_idx]
+                        median_val = np.nanmedian(trans_data_col)
                         binarizer = Binarizer(threshold=median_val, copy=False)
-                        bin_trans_data = binarizer.transform(trans_data.iloc[:,col_idx])
+                        bin_trans_data = binarizer.transform(trans_data_col)
                         trans_data.iloc[:,col_idx] = bin_trans_data
 
             for col in trans_data.columns:

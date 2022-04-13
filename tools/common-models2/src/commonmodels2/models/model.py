@@ -315,15 +315,23 @@ class PyTorchModel(ModelBase):
         new_y = y
         if isinstance(y,pd.DataFrame):
             best_type = np.float64 if np.any(y.dtypes == np.float64) else np.float32
+            if best_type == np.float64: # BB - pytorch doesn't seem to like float64 labels ever?
+                best_type = np.float32
             new_y = y.to_numpy(dtype=best_type)
         elif isinstance(y, pd.Series):
             best_type = y.dtype
+            if best_type == np.float64: # See above
+                best_type = np.float32
             new_y = y.to_numpy(dtype=best_type)
         elif isinstance(y, np.ndarray):
             best_type = y.dtype
+            if best_type == np.float64: # See above
+                best_type = np.float32
             new_y = y.astype(best_type)
         elif isinstance(y, list):
             best_type = np.float64 if np.any([type(elem) == np.float64 for elem in y]) else np.float32
+            if best_type == np.float64: # See above
+                best_type = np.float32
             new_y = np.array(y).astype(best_type)
 
         return new_X, new_y

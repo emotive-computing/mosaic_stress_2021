@@ -107,6 +107,6 @@ def RunML():
 
     p.run()
 
-    p.getDC.save('tf_fashion_results')
+    p.getDC().save('tf_fashion_results')
 
 RunML()

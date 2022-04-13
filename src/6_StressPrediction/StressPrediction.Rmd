@@ -493,7 +493,7 @@ m2 <- lm(rho ~ n + age + gender + lang  + educRcd + incomeRcd + supervise + coho
 tab_model(mt, m1, m2, show.std = T, show.ci = F, show.est = F)
 ```
 
-# Predict IGTB using RF instead of the linear regression above
+# Predict IGTB using RF instead of the affine regression above
 ```{r, warning = F}
 library(randomForest)
 library(caTools)
@@ -554,7 +554,5 @@ data.stai.sub.cast <- data.stai.sub.cast[rowSums(is.na(data.stai.sub.cast[,])) !
 t.test(data.stai.sub.cast$rho_RandomForestRegressor_stress.d, data.stai.sub.cast$rho_RandomForestRegressor_stress.d_shuffled, paired = T)
 
 t.test(data.stai.sub.cast$rho_RandomForestRegressor_stress.d, data.stai.sub.cast$rho_RandomForestRegressor_stress.d_shuffledWithinSubject, paired = T)
-
-t.test(data.stai.sub.cast$rho_RandomForestRegressor_stress.d, data.sub.cast$rho_RandomForestRegressor_stress.d, paired = T)
 ```
 
