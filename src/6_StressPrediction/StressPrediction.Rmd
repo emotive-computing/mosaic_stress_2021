@@ -120,19 +120,19 @@ ggsave("lr_rf_mlp_gru_lstm_gt_densities_smape.pdf", height=3, width=6)
 # data.mlp.melt <- rbind(data.melt, data.mlp)
 # data.mlp.melt <- rbind(data.mlp.melt, data.mlp.true)
 # 
-# Label.labs <- c("")
-# names(Label.labs) <- c("stress.d")
-# Model.labs <- c("Multilayer Perceptron","Random Forest")
-# names(Model.labs) <- c("MLP", "RandomForestRegressor")
-# p = ggplot(subset(data.mlp.melt, Label == "stress.d" & Model != "ElasticNet"), aes(x=value))
-# p = p + geom_histogram(position="identity", aes(y=stat(width*density),group=variable, colour=variable, fill=variable), alpha=0.5)
-# p = p + theme_light()  + theme(legend.position = c(0.85, 0.85), legend.background = element_rect(fill="transparent"), panel.background = element_blank(), legend.title=element_blank(), strip.background = element_rect(fill="white"), strip.text = element_text(color="black", face="bold", size=13, hjust=0.5), axis.text.x = element_text(size=12), axis.text.y = element_text(size=13), text = element_text(size=13))
-# p = p + scale_y_continuous(labels = percent)#ylim(0, 302.5)
-# p = p + facet_wrap(Model ~ Label, labeller = labeller(Model=Model.labs, Label=Label.labs))
-# p = p + xlab("Stress Value") + ylab("Normalized Count")
-# p = p + scale_fill_discrete(breaks=c("True_value","Predicted_value"),labels=c("True Value","Predicted Value")) + scale_colour_discrete(breaks=c("True_value","Predicted_value"),labels=c("True Value","Predicted Value"))
-# p
-# ggsave("mlp_rf_gt_densities.pdf", height=3, width=6)
+Label.labs <- c("")
+names(Label.labs) <- c("stress.d")
+Model.labs <- c("Multilayer Perceptron","Random Forest")
+names(Model.labs) <- c("MLP", "RandomForestRegressor")
+p = ggplot(subset(data.melt, Label == "stress.d" & (Model == "MLP" | Model == "RandomForestRegressor")), aes(x=value))
+p = p + geom_histogram(position="identity", aes(y=stat(width*density),group=variable, colour=variable, fill=variable), alpha=0.5)
+p = p + theme_light()  + theme(legend.position = c(0.85, 0.85), legend.background = element_rect(fill="transparent"), panel.background = element_blank(), legend.title=element_blank(), strip.background = element_rect(fill="white"), strip.text = element_text(color="black", face="bold", size=13, hjust=0.5), axis.text.x = element_text(size=12), axis.text.y = element_text(size=13), text = element_text(size=13))
+p = p + scale_y_continuous(labels = percent)#ylim(0, 302.5)
+p = p + facet_wrap(Model ~ Label, labeller = labeller(Model=Model.labs, Label=Label.labs))
+p = p + xlab("Stress Value") + ylab("Normalized Count")
+p = p + scale_fill_discrete(breaks=c("True_value","Predicted_value"),labels=c("True Value","Predicted Value")) + scale_colour_discrete(breaks=c("True_value","Predicted_value"),labels=c("True Value","Predicted Value"))
+p
+ggsave("mlp_rf_gt_densities.pdf", height=3, width=6)
 ```
 
 ```{r}
@@ -231,8 +231,8 @@ library(dplyr)
 data.sub <- plyr::ddply(data, c("snapshot_id", "Model", "Label"), summarize, n = length(True_value), true.mn = mean(True_value, na.rm = T), pred.mn = mean(Predicted_value, na.rm = T), smape = Metrics::smape(True_value, Predicted_value), rho = cor(True_value, Predicted_value, method = "spearman", use = "pairwise.complete.obs"));
 data.smape.sub <- plyr::ddply(data.smape, c("snapshot_id", "Model", "Label"), summarize, n = length(True_value), true.mn = mean(True_value, na.rm = T), pred.mn = mean(Predicted_value, na.rm = T), smape = Metrics::smape(True_value, Predicted_value), rho = cor(True_value, Predicted_value, method = "spearman", use = "pairwise.complete.obs"));
 
-ddply(data.sub, c("Model", "Label"), summarize, rho.mn = mean(rho, na.rm = T), rho.sd = sd(rho, na.rm = T), smape.mn = mean(smape, na.rm = T), smape.sd = sd(smape, na.rm = T))
-ddply(data.smape.sub, c("Model", "Label"), summarize, rho.mn = mean(rho, na.rm = T), rho.sd = sd(rho, na.rm = T), smape.mn = mean(smape, na.rm = T), smape.sd = sd(smape, na.rm = T))
+plyr::ddply(data.sub, c("Model", "Label"), summarize, rho.mn = mean(rho, na.rm = T), rho.sd = sd(rho, na.rm = T), smape.mn = mean(smape, na.rm = T), smape.sd = sd(smape, na.rm = T))
+plyr::ddply(data.smape.sub, c("Model", "Label"), summarize, rho.mn = mean(rho, na.rm = T), rho.sd = sd(rho, na.rm = T), smape.mn = mean(smape, na.rm = T), smape.sd = sd(smape, na.rm = T))
 
 # Spearman boxplot
 # p_compare1 <- compare_means(rho~Label, data=subset(data.sub, Model="ElasticNet"), method="t.test", paired=T) %>% mutate(y.position = c(0.75, 0.6, 0.95))
@@ -271,9 +271,9 @@ p
 ggsave("smape_boxplot.pdf", height=3, width=6)
 
 # Spearman histograms
-data.sub.stress_vline <- subset(data.sub, Label=="stress.d") %>% group_by(Model) %>% summarise(mean_val = mean(rho, na.rm=T))
-data.sub.stressshuf_vline <- subset(data.sub, Label=="stress.d_shuffled") %>% group_by(Model) %>% summarise(mean_val = mean(rho, na.rm=T))
-data.sub.stressshufwtn_vline <- subset(data.sub, Label=="stress.d_shuffledWithinSubject") %>% group_by(Model) %>% summarise(mean_val = mean(rho, na.rm=T))
+data.sub.stress_vline <- subset(data.sub, Label=="stress.d") %>% dplyr::group_by(Model) %>% dplyr::summarise(mean_val = mean(rho, na.rm=T))
+data.sub.stressshuf_vline <- subset(data.sub, Label=="stress.d_shuffled") %>% dplyr::group_by(Model) %>% dplyr::summarise(mean_val = mean(rho, na.rm=T))
+data.sub.stressshufwtn_vline <- subset(data.sub, Label=="stress.d_shuffledWithinSubject") %>% dplyr::group_by(Model) %>% dplyr::summarise(mean_val = mean(rho, na.rm=T))
 #p = ggplot(data.sub, aes(x = rho, fill = Label)) + geom_histogram(binwidth = .05) + geom_vline(xintercept = mean(subset(data.sub, Label == "stress.d")$rho, na.rm = T), color = "red") + geom_vline(xintercept = mean(subset(data.sub, Label == "stress.d_shuffled")$rho, na.rm = T), color = "green") + geom_vline(xintercept = mean(subset(data.sub, Label == "stress.d_shuffledWithinSubject")$rho, na.rm = T), color = "blue")
 p = ggplot(data.sub, aes(x = rho, fill = Label)) + geom_histogram(binwidth = .05)
 p = p + geom_vline(data=data.sub.stress_vline, mapping = aes(xintercept=mean_val), color = "red")
@@ -289,9 +289,9 @@ p
 ggsave("spearman_histograms.pdf", height=3, width=6)
 
 # SMAPE histograms
-data.smape.sub.stress_vline <- subset(data.smape.sub, Label=="stress.d") %>% group_by(Model) %>% summarise(mean_val = mean(smape, na.rm=T))
-data.smape.sub.stressshuf_vline <- subset(data.smape.sub, Label=="stress.d_shuffled") %>% group_by(Model) %>% summarise(mean_val = mean(smape, na.rm=T))
-data.smape.sub.stressshufwtn_vline <- subset(data.smape.sub, Label=="stress.d_shuffledWithinSubject") %>% group_by(Model) %>% summarise(mean_val = mean(smape, na.rm=T))
+data.smape.sub.stress_vline <- subset(data.smape.sub, Label=="stress.d") %>% dplyr::group_by(Model) %>% dplyr::summarise(mean_val = mean(smape, na.rm=T))
+data.smape.sub.stressshuf_vline <- subset(data.smape.sub, Label=="stress.d_shuffled") %>% dplyr::group_by(Model) %>% dplyr::summarise(mean_val = mean(smape, na.rm=T))
+data.smape.sub.stressshufwtn_vline <- subset(data.smape.sub, Label=="stress.d_shuffledWithinSubject") %>% dplyr::group_by(Model) %>% dplyr::summarise(mean_val = mean(smape, na.rm=T))
 p = ggplot(data.smape.sub, aes(x = smape, fill = Label)) + geom_histogram(binwidth = .02)
 p = p + geom_vline(data=data.smape.sub.stress_vline, mapping = aes(xintercept=mean_val), color = "red")
 p = p + geom_vline(data=data.smape.sub.stressshuf_vline, mapping = aes(xintercept=mean_val), color = "green")
